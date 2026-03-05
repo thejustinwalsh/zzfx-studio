@@ -9,9 +9,10 @@ interface DropdownProps<T extends string> {
   value: T;
   options: readonly T[];
   onSelect: (value: T) => void;
+  compact?: boolean;
 }
 
-export function Dropdown<T extends string>({ label, value, options, onSelect }: DropdownProps<T>) {
+export function Dropdown<T extends string>({ label, value, options, onSelect, compact }: DropdownProps<T>) {
   const [open, setOpen] = useState(false);
 
   const handleSelect = useCallback((item: T) => {
@@ -20,13 +21,14 @@ export function Dropdown<T extends string>({ label, value, options, onSelect }: 
   }, [onSelect]);
 
   return (
-    <View style={styles.wrapper}>
-      <Text style={styles.label}>{label}</Text>
+    <View style={compact ? styles.wrapperCompact : styles.wrapper}>
+      {!compact && <Text style={styles.label}>{label}</Text>}
       <Pressable
-        style={({ pressed }) => [styles.trigger, pressed && styles.pressed]}
+        style={({ pressed }) => [compact ? styles.triggerCompact : styles.trigger, pressed && styles.pressed]}
         onPress={() => setOpen(true)}
       >
-        <Text style={styles.value}>{value}</Text>
+        {compact && <Text style={styles.labelInline}>{label}</Text>}
+        <Text style={compact ? styles.valueCompact : styles.value}>{value}</Text>
         <Text style={styles.arrow}>▾</Text>
       </Pressable>
 
@@ -60,6 +62,7 @@ const styles = StyleSheet.create({
   wrapper: {
     gap: spacing.xs,
   },
+  wrapperCompact: {},
   label: {
     fontFamily: fonts.mono,
     fontSize: fontSize.trackSub,
@@ -77,12 +80,36 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     gap: spacing.md,
   },
+  triggerCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.bgElevated,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    gap: spacing.xs,
+  },
+  labelInline: {
+    fontFamily: fonts.mono,
+    fontSize: 8,
+    color: colors.textDim,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
   value: {
     fontFamily: fonts.mono,
     fontSize: fontSize.buttonLabel,
     color: colors.textPrimary,
     fontWeight: '600',
     flex: 1,
+    textTransform: 'uppercase',
+  },
+  valueCompact: {
+    fontFamily: fonts.mono,
+    fontSize: fontSize.buttonLabel,
+    color: colors.textPrimary,
+    fontWeight: '600',
     textTransform: 'uppercase',
   },
   arrow: {

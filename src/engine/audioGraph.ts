@@ -82,6 +82,46 @@ export class AudioGraph {
     }
   }
 
+  replaceAllChannels(
+    channelBuffers: [number[], number[]][],
+    songDurationSec: number,
+    bpm: number
+  ): void {
+    if (!this._isPlaying) return;
+
+    const now = this.ctx.currentTime;
+    const elapsed = (now - this.playStartTime) % this.songDuration;
+
+    // Quantize to next row boundary using OLD bpm
+    const rowDuration = 60 / this._bpm / 4;
+    const nextRowTime = Math.ceil(elapsed / rowDuration) * rowDuration;
+    const swapTime = this.playStartTime +
+      Math.floor((now - this.playStartTime) / this.songDuration) * this.songDuration +
+      nextRowTime;
+
+    // Compute offset into NEW buffer at the equivalent position
+    // Map the old-tempo position to the new-tempo buffer
+    const oldRowIndex = Math.round(nextRowTime / rowDuration);
+    const newRowDuration = 60 / bpm / 4;
+    const newOffset = (oldRowIndex * newRowDuration) % songDurationSec;
+
+    // Stop all old sources at swap time, start new ones
+    const numChannels = Math.min(channelBuffers.length, 4);
+    for (let ch = 0; ch < numChannels; ch++) {
+      const oldSource = this.sources[ch];
+      if (oldSource) {
+        try { oldSource.stop(swapTime); } catch (_) { /* already stopped */ }
+      }
+      this.createAndStartSource(ch, channelBuffers[ch], newOffset, swapTime);
+    }
+
+    // Update timing state at swap point
+    this.songDuration = songDurationSec;
+    this._bpm = bpm;
+    // Adjust playStartTime so getPosition() stays correct after swap
+    this.playStartTime = swapTime - newOffset;
+  }
+
   replaceChannel(ch: number, stereoBuffer: [number[], number[]]): void {
     if (!this._isPlaying || ch < 0 || ch >= 4) return;
 

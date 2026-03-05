@@ -3,7 +3,6 @@ import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, Text, View, ScrollView, Pressable } from 'react-native';
 import { colors, fonts, fontSize, spacing } from './src/theme';
 import {
-  Button,
   Dropdown,
   Slider,
   PatternBlock,
@@ -33,20 +32,34 @@ import {
 import type { Song, VibeName, NoteName, ScaleName, PatternLabel } from './src/engine';
 import type { ChannelIndex } from './src/theme/colors';
 
+function pick<T>(arr: readonly T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
 const VIBE_OPTIONS: VibeName[] = ['adventure', 'battle', 'dungeon', 'titleScreen', 'boss'];
 const KEY_OPTIONS: NoteName[] = [...CHROMATIC];
 const SCALE_OPTIONS: ScaleName[] = Object.keys(SCALES) as ScaleName[];
 const CHANNEL_NAMES = ['LEAD', 'HARM', 'BASS', 'DRUM'];
 const CHANNEL_COLORS = [colors.ch0Primary, colors.ch1Primary, colors.ch2Primary, colors.ch3Primary];
 
+// Pick a random initial config
+const INITIAL_VIBE = VIBE_OPTIONS[Math.floor(Math.random() * VIBE_OPTIONS.length)];
+const INITIAL_KEY = KEY_OPTIONS[Math.floor(Math.random() * KEY_OPTIONS.length)];
+const INITIAL_VIBE_CONFIG = VIBE_CONFIG[INITIAL_VIBE];
+const INITIAL_SCALE = INITIAL_VIBE_CONFIG.preferredScales[
+  Math.floor(Math.random() * INITIAL_VIBE_CONFIG.preferredScales.length)
+];
+
+const INITIAL_SONG = generateSong({ vibe: INITIAL_VIBE, key: INITIAL_KEY, scale: INITIAL_SCALE });
+
 export default function App() {
-  const [song, setSong] = useState<Song | null>(null);
+  const [song, setSong] = useState<Song | null>(INITIAL_SONG);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [activePattern, setActivePattern] = useState<PatternLabel>('A');
-  const [vibe, setVibe] = useState<VibeName>('adventure');
-  const [key, setKey] = useState<NoteName>('C');
-  const [scale, setScale] = useState<ScaleName>('major');
-  const [bpm, setBpm] = useState(120);
+  const [activePattern, setActivePattern] = useState<PatternLabel>(INITIAL_SONG.patternOrder[0]);
+  const [vibe, setVibe] = useState<VibeName>(INITIAL_VIBE);
+  const [key, setKey] = useState<NoteName>(INITIAL_KEY);
+  const [scale, setScale] = useState<ScaleName>(INITIAL_SCALE);
+  const [bpm, setBpm] = useState(INITIAL_SONG.config.bpm);
   const [playbackRow, setPlaybackRow] = useState<number | null>(null);
   const [playbackPatternIdx, setPlaybackPatternIdx] = useState(0);
   const [flashChannels, setFlashChannels] = useState<Set<number>>(new Set());
@@ -55,6 +68,7 @@ export default function App() {
   const audioGraphRef = useRef<AudioGraph | null>(null);
   const channelBuffersRef = useRef<[number[], number[]][]>([]);
   const rafRef = useRef<number>(0);
+  const bpmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Lazy-init AudioGraph
   const getAudioGraph = useCallback(() => {
@@ -128,13 +142,12 @@ export default function App() {
     setTimeout(() => setFlashChannels(new Set()), 150);
   }, []);
 
-  const handleGenerate = useCallback(() => {
-    unlockAudio();
-    const newSong = generateSong({ vibe, key, scale, bpm });
+  // Core generate function — used by auto-regen and manual re-roll
+  const doGenerate = useCallback((v: VibeName, k: NoteName, s: ScaleName, b: number) => {
+    const newSong = generateSong({ vibe: v, key: k, scale: s, bpm: b });
     setSong(newSong);
     setActivePattern(newSong.patternOrder[0]);
     setBpm(newSong.config.bpm);
-    setScale(newSong.config.scale);
     flashChannel([0, 1, 2, 3]);
     // Stop playback
     if (audioGraphRef.current?.isPlaying) {
@@ -143,7 +156,60 @@ export default function App() {
       setPlaybackRow(null);
       cancelAnimationFrame(rafRef.current);
     }
-  }, [vibe, key, scale, bpm, flashChannel]);
+  }, [flashChannel]);
+
+  // Auto-regen when vibe/key/scale changes
+  const isInitialMount = useRef(true);
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    doGenerate(vibe, key, scale, bpm);
+  }, [vibe, key, scale]);
+
+  // Live BPM change — debounced re-render + hot-swap while playing
+  useEffect(() => {
+    if (!song || !audioGraphRef.current?.isPlaying) {
+      // Not playing — just update the song config for next play
+      if (song && bpm !== song.config.bpm) {
+        setSong({ ...song, config: { ...song.config, bpm } });
+      }
+      return;
+    }
+
+    if (bpmTimerRef.current) clearTimeout(bpmTimerRef.current);
+    bpmTimerRef.current = setTimeout(() => {
+      if (!song) return;
+      const newSong = { ...song, config: { ...song.config, bpm } };
+      setSong(newSong);
+
+      const { instruments, patterns, sequence } = songToZzfxm(newSong);
+      const buffers = zzfxMChannels(instruments, patterns, sequence, bpm);
+      if (buffers.length === 0 || buffers[0][0].length === 0) return;
+
+      channelBuffersRef.current = buffers;
+      const songDuration = buffers[0][0].length / 44100;
+      audioGraphRef.current?.replaceAllChannels(buffers, songDuration, bpm);
+    }, 80);
+
+    return () => {
+      if (bpmTimerRef.current) clearTimeout(bpmTimerRef.current);
+    };
+  }, [bpm]);
+
+  // Re-roll everything: random vibe, key, scale
+  const handleReroll = useCallback(() => {
+    unlockAudio();
+    const newVibe = pick(VIBE_OPTIONS);
+    const vibeConf = VIBE_CONFIG[newVibe];
+    const newKey = pick(KEY_OPTIONS);
+    const newScale = pick(vibeConf.preferredScales);
+    setVibe(newVibe);
+    setKey(newKey);
+    setScale(newScale as ScaleName);
+    doGenerate(newVibe, newKey, newScale, bpm);
+  }, [bpm, doGenerate]);
 
   const handlePlay = useCallback(() => {
     if (!song) return;
@@ -364,48 +430,21 @@ export default function App() {
       <View style={styles.header}>
         <Text style={styles.title}>ZZFX GEN STUDIO</Text>
         <View style={styles.controls}>
-          <Dropdown
-            label="VIBE"
-            value={vibe}
-            options={VIBE_OPTIONS}
-            onSelect={(v) => setVibe(v as VibeName)}
-          />
-          <Dropdown
-            label="KEY"
-            value={key}
-            options={KEY_OPTIONS}
-            onSelect={(v) => setKey(v as NoteName)}
-          />
-          <Dropdown
-            label="SCALE"
-            value={scale}
-            options={SCALE_OPTIONS}
-            onSelect={(v) => setScale(v as ScaleName)}
-          />
-          <Slider
-            label="BPM"
-            value={bpm}
-            min={80}
-            max={180}
-            step={1}
-            onValueChange={setBpm}
-          />
-        </View>
-        <View style={styles.transportRow}>
-          <Button label="GENERATE" variant="generate" onPress={handleGenerate} />
-          <Button
-            label={isPlaying ? 'PLAYING' : 'PLAY'}
-            variant="transport"
-            active={isPlaying}
-            onPress={handlePlay}
-            disabled={!song}
-          />
-          <Button
-            label="STOP"
-            variant="destructive"
-            onPress={handleStop}
-            disabled={!isPlaying}
-          />
+          <View style={styles.transport}>
+            <Pressable onPress={handleReroll} style={({ pressed }) => [styles.transportBtn, styles.transportBtnRegen, pressed && { opacity: 0.6 }]}>
+              <Text style={[styles.transportIcon, { color: colors.accentGenerate }]}>⟳</Text>
+            </Pressable>
+            <Pressable onPress={handlePlay} disabled={!song} style={({ pressed }) => [styles.transportBtn, isPlaying && styles.transportBtnActive, pressed && { opacity: 0.6 }, !song && { opacity: 0.4 }]}>
+              <Text style={[styles.transportIcon, isPlaying && styles.transportIconActive]}>▶</Text>
+            </Pressable>
+            <Pressable onPress={handleStop} disabled={!isPlaying} style={({ pressed }) => [styles.transportBtn, pressed && { opacity: 0.6 }, !isPlaying && { opacity: 0.4 }]}>
+              <Text style={[styles.transportIcon, { color: colors.accentStop }]}>■</Text>
+            </Pressable>
+          </View>
+          <Dropdown label="VIBE" value={vibe} options={VIBE_OPTIONS} onSelect={(v) => setVibe(v as VibeName)} />
+          <Dropdown label="KEY" value={key} options={KEY_OPTIONS} onSelect={(v) => setKey(v as NoteName)} />
+          <Dropdown label="SCALE" value={scale} options={SCALE_OPTIONS} onSelect={(v) => setScale(v as ScaleName)} />
+          <Slider label="BPM" value={bpm} min={80} max={180} step={1} onValueChange={setBpm} />
         </View>
       </View>
 
@@ -598,13 +637,7 @@ export default function App() {
             );
           })}
         </ScrollView>
-      ) : (
-        <View style={styles.placeholder}>
-          <Text style={styles.subtitle}>
-            Select a vibe and press GENERATE to create a song
-          </Text>
-        </View>
-      )}
+      ) : null}
     </View>
   );
 }
@@ -635,10 +668,33 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     alignItems: 'flex-end',
   },
-  transportRow: {
+  transport: {
     flexDirection: 'row',
-    gap: spacing.md,
-    alignItems: 'center',
+    alignItems: 'flex-end',
+    gap: spacing.sm,
+  },
+  transportBtn: {
+    width: 36,
+    height: 36,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    backgroundColor: colors.bgElevated,
+  },
+  transportBtnRegen: {
+    borderColor: colors.accentGenerate,
+  },
+  transportBtnActive: {
+    borderColor: colors.accentPlay,
+    backgroundColor: colors.accentPlay,
+  },
+  transportIcon: {
+    fontSize: 20,
+    color: colors.textPrimary,
+  },
+  transportIconActive: {
+    color: colors.bgPrimary,
   },
   sequenceStrip: {
     paddingHorizontal: spacing.xl,
@@ -802,18 +858,5 @@ const styles = StyleSheet.create({
   },
   channelFlash: {
     backgroundColor: 'rgba(168, 85, 247, 0.15)',
-  },
-  placeholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.lg,
-  },
-  subtitle: {
-    fontFamily: fonts.mono,
-    fontSize: fontSize.panelTitle,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    paddingHorizontal: spacing.xxl,
   },
 });

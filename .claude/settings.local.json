@@ -22,7 +22,8 @@
       "Bash(curl:*)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(npx zzfx:*)",
-      "WebFetch(domain:www.synthycraft.com)"
+      "WebFetch(domain:www.synthycraft.com)",
+      "Bash(pnpm exec:*)"
     ]
   }
 }

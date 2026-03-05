@@ -12,9 +12,10 @@ interface SliderProps {
   step?: number;
   onValueChange: (value: number) => void;
   formatValue?: (value: number) => string;
+  compact?: boolean;
 }
 
-export function Slider({ label, value, min, max, step = 1, onValueChange, formatValue }: SliderProps) {
+export function Slider({ label, value, min, max, step = 1, onValueChange, formatValue, compact }: SliderProps) {
   const trackWidth = useRef(0);
   const fraction = (value - min) / (max - min);
 
@@ -46,6 +47,19 @@ export function Slider({ label, value, min, max, step = 1, onValueChange, format
 
   const displayValue = formatValue ? formatValue(value) : String(value);
 
+  if (compact) {
+    return (
+      <View style={styles.wrapperCompact}>
+        <Text style={styles.labelCompact}>{label}</Text>
+        <View style={styles.trackCompact} onLayout={onLayout} {...panResponder.panHandlers}>
+          <View style={[styles.fill, { width: `${fraction * 100}%` }]} />
+          <View style={[styles.thumb, { left: `${fraction * 100}%` }]} />
+        </View>
+        <Text style={styles.valueCompact}>{displayValue}</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.wrapper}>
       <View style={styles.header}>
@@ -64,6 +78,35 @@ const styles = StyleSheet.create({
   wrapper: {
     gap: spacing.sm,
   },
+  wrapperCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  labelCompact: {
+    fontFamily: fonts.mono,
+    fontSize: 8,
+    color: colors.textDim,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  trackCompact: {
+    height: 16,
+    width: 60,
+    backgroundColor: colors.bgElevated,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    justifyContent: 'center',
+    position: 'relative' as const,
+    overflow: 'hidden' as const,
+  },
+  valueCompact: {
+    fontFamily: fonts.mono,
+    fontSize: fontSize.buttonLabel,
+    color: colors.accentPrimary,
+    fontWeight: '700',
+    minWidth: 28,
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -81,6 +124,8 @@ const styles = StyleSheet.create({
     fontSize: fontSize.bpmDisplay,
     color: colors.accentPrimary,
     fontWeight: '700',
+    minWidth: 30,
+    textAlign: 'right',
   },
   track: {
     height: 20,
