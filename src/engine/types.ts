@@ -32,17 +32,30 @@ export function drumNoteToName(note: number): string {
   return 'HAT';
 }
 
+export type SongLength = 'short' | 'long' | 'epic';
+
+// Section roles define HOW a unique pattern is generated
+export type SectionRole = 'verse' | 'contrast' | 'bridge' | 'breakdown' | 'climax';
+
+// A structure template: roles for each unique pattern + the playback sequence
+export interface StructureTemplate {
+  roles: SectionRole[];   // role per unique pattern (A=roles[0], B=roles[1], etc.)
+  sequence: number[];     // playback order referencing pattern indices
+}
+
 export interface SongConfig {
   vibe: VibeName;
   key: NoteName;
   scale: ScaleName;
   bpm: number;
+  length: SongLength;
 }
 
 export interface Song {
   config: SongConfig;
   instruments: ZzFXSound[];
   patterns: Record<PatternLabel, Pattern>;
+  patternRoles: Record<PatternLabel, SectionRole>;
   sequence: number[];
   patternOrder: PatternLabel[];
 }
@@ -58,6 +71,6 @@ export interface VibeConfig {
   melodyDensity: number;
   bassDensity: [number, number];
   drumIntensity: 'sparse' | 'light' | 'medium' | 'high' | 'intense';
-  structures: number[][];
+  structures: Record<SongLength, StructureTemplate[]>;
   fxChance: number;
 }

@@ -137,9 +137,9 @@ const TRAITS: Record<TraitName, TraitFn> = {
     p[10] = randRange(-5, -15);      // pitchJump down
     p[11] = randRange(0.01, 0.03);   // pitchJumpTime (quick)
   },
-  // Bit crush — lo-fi crunch
+  // Bit crush — lo-fi crunch (keep values mild, high values sound broken)
   crushed: (p) => {
-    p[15] = pick([0.5, 1, 1.5, 2]);  // bitCrush
+    p[15] = pick([0.3, 0.5, 0.7, 1]);  // bitCrush
   },
   // Echo/delay — adds depth and space
   echoed: (p) => {
@@ -217,27 +217,27 @@ const VIBE_TRAITS: Record<VibeName, Record<ChannelRole, VibeTraitConfig>> = {
   battle: {
     lead: {
       archetypeWeights: [3, 3, 1, 2, 0],  // square + pulse, some saw, no sine
-      traitPool:    ['aggressive', 'staccato', 'crushed', 'fastVibrato', 'pitchDrop'],
-      traitWeights: [3,            3,          2,         1,             1],
+      traitPool:    ['aggressive', 'staccato', 'crushed', 'fastVibrato', 'pitchDrop', 'clean'],
+      traitWeights: [3,            3,          1,         1,             1,           2],
       traitCount: [1, 2],
     },
     harmony: {
       archetypeWeights: [1, 3, 0, 0, 3],  // saw + buzzy
-      traitPool:    ['aggressive', 'staccato', 'crushed', 'clean'],
-      traitWeights: [3,            2,          2,         1],
+      traitPool:    ['aggressive', 'staccato', 'clean', 'fastVibrato'],
+      traitWeights: [3,            2,          3,       1],
       traitCount: [0, 2],
     },
     bass: {
       archetypeWeights: [2, 3, 2, 0],  // punch: square > triangle > saw
-      traitPool:    ['aggressive', 'staccato', 'crushed'],
-      traitWeights: [3,            3,          1],
+      traitPool:    ['aggressive', 'staccato', 'clean'],
+      traitWeights: [3,            3,          2],
       traitCount: [1, 2],
     },
     drums: {
-      archetypeWeights: [2, 3, 1, 3, 1],  // tight + crushed
-      traitPool:    ['aggressive', 'crushed'],
-      traitWeights: [3,            2],
-      traitCount: [0, 2],
+      archetypeWeights: [2, 3, 1, 2, 1],  // tight favored, less crushed archetype
+      traitPool:    ['aggressive', 'clean'],
+      traitWeights: [2,            3],
+      traitCount: [0, 1],
     },
   },
 
@@ -298,27 +298,27 @@ const VIBE_TRAITS: Record<VibeName, Record<ChannelRole, VibeTraitConfig>> = {
   boss: {
     lead: {
       archetypeWeights: [2, 3, 2, 3, 0],  // pulse + saw, no sine
-      traitPool:    ['aggressive', 'crushed', 'fastVibrato', 'pitchDrop', 'staccato', 'pitchBend'],
-      traitWeights: [3,            3,         2,             2,           1,           1],
-      traitCount: [1, 3],
+      traitPool:    ['aggressive', 'crushed', 'fastVibrato', 'pitchDrop', 'staccato', 'clean'],
+      traitWeights: [3,            1,         2,             2,           2,           1],
+      traitCount: [1, 2],
     },
     harmony: {
       archetypeWeights: [0, 3, 0, 0, 3],  // saw + buzzy
-      traitPool:    ['aggressive', 'crushed', 'fastVibrato', 'staccato'],
-      traitWeights: [3,            2,         2,             1],
+      traitPool:    ['aggressive', 'fastVibrato', 'staccato', 'clean'],
+      traitWeights: [3,            2,             2,          2],
       traitCount: [1, 2],
     },
     bass: {
       archetypeWeights: [1, 3, 3, 0],  // square + saw (gritty)
-      traitPool:    ['aggressive', 'crushed', 'staccato', 'pitchDrop'],
-      traitWeights: [3,            2,         2,          1],
+      traitPool:    ['aggressive', 'staccato', 'pitchDrop', 'clean'],
+      traitWeights: [3,            2,          1,           2],
       traitCount: [1, 2],
     },
     drums: {
-      archetypeWeights: [1, 2, 1, 4, 1],  // crushed favored
-      traitPool:    ['aggressive', 'crushed'],
-      traitWeights: [3,            3],
-      traitCount: [1, 2],
+      archetypeWeights: [1, 3, 1, 2, 1],  // tight favored
+      traitPool:    ['aggressive', 'clean'],
+      traitWeights: [2,            2],
+      traitCount: [0, 1],
     },
   },
 };

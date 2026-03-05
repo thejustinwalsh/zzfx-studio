@@ -295,9 +295,10 @@ export function zzfxMChannels(
   }
   if (channelCount === 0) return [];
 
-  // Pre-compute total buffer length
-  const maxPatternSteps = patterns[0][0].length - 2; // subtract instrument + pan header
-  const totalSamples = sequence.length * maxPatternSteps * beatLength;
+  // Pre-compute total buffer length using same logic as zzfxM:
+  // first pattern loses 1 beat (notFirstBeat guard), rest get full length
+  const maxPatternSteps = patterns[0][0].length - 2;
+  const totalSamples = ((sequence.length - 1) * maxPatternSteps + (maxPatternSteps - 1)) * beatLength;
 
   // Allocate per-channel stereo buffers
   const channelBuffers: [number[], number[]][] = [];
@@ -313,22 +314,22 @@ export function zzfxMChannels(
 
     let sampleBuffer: number[] = [];
     let sampleOffset = 0;
-    let pitch = 0;
     let notFirstBeat = 0;
     let instrument = 0;
     let panning = 0;
     let attenuation = 0;
+    let outSampleOffset = 0;
 
     const leftBuf = channelBuffers[channelIndex][0];
     const rightBuf = channelBuffers[channelIndex][1];
 
     sequence.forEach((patternIndex: number, sequenceIndex: number) => {
       const patternChannel = patterns[patternIndex][channelIndex] || [0, 0, 0];
-      const outSampleBase =
-        sequenceIndex * maxPatternSteps * beatLength;
+      const nextSampleOffset = outSampleOffset +
+        (patternChannel.length - 2 - (notFirstBeat ? 0 : 1)) * beatLength;
       const isSequenceEnd = sequenceIndex === sequence.length - 1;
 
-      let k = outSampleBase;
+      let k = outSampleOffset;
 
       for (
         let i = 2;
@@ -373,6 +374,8 @@ export function zzfxMChannels(
           }
         }
       }
+
+      outSampleOffset = nextSampleOffset;
     });
   }
 

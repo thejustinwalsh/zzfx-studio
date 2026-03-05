@@ -29,7 +29,7 @@ import {
   SCALES,
   VIBE_CONFIG,
 } from './src/engine';
-import type { Song, VibeName, NoteName, ScaleName, PatternLabel } from './src/engine';
+import type { Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel } from './src/engine';
 import type { ChannelIndex } from './src/theme/colors';
 
 function pick<T>(arr: readonly T[]): T {
@@ -39,6 +39,7 @@ function pick<T>(arr: readonly T[]): T {
 const VIBE_OPTIONS: VibeName[] = ['adventure', 'battle', 'dungeon', 'titleScreen', 'boss'];
 const KEY_OPTIONS: NoteName[] = [...CHROMATIC];
 const SCALE_OPTIONS: ScaleName[] = Object.keys(SCALES) as ScaleName[];
+const LENGTH_OPTIONS: SongLength[] = ['short', 'long', 'epic'];
 const CHANNEL_NAMES = ['LEAD', 'HARM', 'BASS', 'DRUM'];
 const CHANNEL_COLORS = [colors.ch0Primary, colors.ch1Primary, colors.ch2Primary, colors.ch3Primary];
 
@@ -50,7 +51,8 @@ const INITIAL_SCALE = INITIAL_VIBE_CONFIG.preferredScales[
   Math.floor(Math.random() * INITIAL_VIBE_CONFIG.preferredScales.length)
 ];
 
-const INITIAL_SONG = generateSong({ vibe: INITIAL_VIBE, key: INITIAL_KEY, scale: INITIAL_SCALE });
+const INITIAL_LENGTH: SongLength = 'long';
+const INITIAL_SONG = generateSong({ vibe: INITIAL_VIBE, key: INITIAL_KEY, scale: INITIAL_SCALE, length: INITIAL_LENGTH });
 
 export default function App() {
   const [song, setSong] = useState<Song | null>(INITIAL_SONG);
@@ -60,15 +62,20 @@ export default function App() {
   const [key, setKey] = useState<NoteName>(INITIAL_KEY);
   const [scale, setScale] = useState<ScaleName>(INITIAL_SCALE);
   const [bpm, setBpm] = useState(INITIAL_SONG.config.bpm);
+  const [songLength, setSongLength] = useState<SongLength>(INITIAL_LENGTH);
   const [playbackRow, setPlaybackRow] = useState<number | null>(null);
   const [playbackPatternIdx, setPlaybackPatternIdx] = useState(0);
   const [flashChannels, setFlashChannels] = useState<Set<number>>(new Set());
   const [mutedChannels, setMutedChannels] = useState<Set<number>>(new Set());
   const [soloChannel, setSoloChannel] = useState<number | null>(null);
+  const [channelVolumes, setChannelVolumes] = useState<number[]>(
+    () => INITIAL_SONG.instruments.map(p => p[0] ?? 1)
+  );
   const audioGraphRef = useRef<AudioGraph | null>(null);
   const channelBuffersRef = useRef<[number[], number[]][]>([]);
   const rafRef = useRef<number>(0);
   const bpmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const volTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Lazy-init AudioGraph
   const getAudioGraph = useCallback(() => {
@@ -143,11 +150,13 @@ export default function App() {
   }, []);
 
   // Core generate function — used by auto-regen and manual re-roll
-  const doGenerate = useCallback((v: VibeName, k: NoteName, s: ScaleName, b: number) => {
-    const newSong = generateSong({ vibe: v, key: k, scale: s, bpm: b });
+  const doGenerate = useCallback((v: VibeName, k: NoteName, s: ScaleName, b: number, l: SongLength) => {
+    const newSong = generateSong({ vibe: v, key: k, scale: s, bpm: b, length: l });
     setSong(newSong);
     setActivePattern(newSong.patternOrder[0]);
     setBpm(newSong.config.bpm);
+    const vols = newSong.instruments.map(p => p[0] ?? 1);
+    setChannelVolumes(vols);
     flashChannel([0, 1, 2, 3]);
     // Stop playback
     if (audioGraphRef.current?.isPlaying) {
@@ -158,15 +167,15 @@ export default function App() {
     }
   }, [flashChannel]);
 
-  // Auto-regen when vibe/key/scale changes
+  // Auto-regen when vibe/key/scale/length changes
   const isInitialMount = useRef(true);
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
       return;
     }
-    doGenerate(vibe, key, scale, bpm);
-  }, [vibe, key, scale]);
+    doGenerate(vibe, key, scale, bpm, songLength);
+  }, [vibe, key, scale, songLength]);
 
   // Live BPM change — debounced re-render + hot-swap while playing
   useEffect(() => {
@@ -205,11 +214,13 @@ export default function App() {
     const vibeConf = VIBE_CONFIG[newVibe];
     const newKey = pick(KEY_OPTIONS);
     const newScale = pick(vibeConf.preferredScales);
+    const newBpm = vibeConf.bpmRange[0] + Math.floor(Math.random() * (vibeConf.bpmRange[1] - vibeConf.bpmRange[0] + 1));
     setVibe(newVibe);
     setKey(newKey);
     setScale(newScale as ScaleName);
-    doGenerate(newVibe, newKey, newScale, bpm);
-  }, [bpm, doGenerate]);
+    setBpm(newBpm);
+    doGenerate(newVibe, newKey, newScale, newBpm, songLength);
+  }, [songLength, doGenerate]);
 
   const handlePlay = useCallback(() => {
     if (!song) return;
@@ -279,8 +290,20 @@ export default function App() {
   const handleRegenInstruments = useCallback(() => {
     if (!song) return;
     const newInstruments = generateInstruments(song.config.vibe);
-    setSong({ ...song, instruments: newInstruments });
+    const newSong = { ...song, instruments: newInstruments };
+    setSong(newSong);
+    const vols = newInstruments.map(p => p[0] ?? 1);
+    setChannelVolumes(vols);
     flashChannel([0, 1, 2, 3]);
+
+    // Hot-swap all channels while playing
+    if (audioGraphRef.current?.isPlaying) {
+      const { instruments, patterns, sequence, bpm: songBpm } = songToZzfxm(newSong);
+      const newBuffers = zzfxMChannels(instruments, patterns, sequence, songBpm);
+      channelBuffersRef.current = newBuffers;
+      const songDuration = newBuffers[0][0].length / 44100;
+      audioGraphRef.current.replaceAllChannels(newBuffers, songDuration, songBpm);
+    }
   }, [song, flashChannel]);
 
   const handleRegenSingleInstrument = useCallback((channelIndex: number) => {
@@ -290,6 +313,12 @@ export default function App() {
     newInstruments[channelIndex] = newAll[channelIndex];
     const newSong = { ...song, instruments: newInstruments };
     setSong(newSong);
+    const newVol = newInstruments[channelIndex][0] ?? 1;
+    setChannelVolumes(prev => {
+      const next = [...prev];
+      next[channelIndex] = newVol;
+      return next;
+    });
 
     // Hot-swap while playing
     if (audioGraphRef.current?.isPlaying) {
@@ -299,6 +328,35 @@ export default function App() {
       audioGraphRef.current.replaceChannel(channelIndex, newBuffers[channelIndex]);
     }
   }, [song, flashChannel]);
+
+  const handleVolumeChange = useCallback((channelIndex: number, newVol: number) => {
+    if (!song) return;
+
+    // Update volume state immediately
+    setChannelVolumes(prev => {
+      const next = [...prev];
+      next[channelIndex] = newVol;
+      return next;
+    });
+
+    // Update instrument param
+    const newInstruments = [...song.instruments];
+    newInstruments[channelIndex] = [...newInstruments[channelIndex]];
+    newInstruments[channelIndex][0] = newVol;
+    const newSong = { ...song, instruments: newInstruments };
+    setSong(newSong);
+
+    // Debounced re-render + hot-swap while playing
+    if (audioGraphRef.current?.isPlaying) {
+      if (volTimerRef.current) clearTimeout(volTimerRef.current);
+      volTimerRef.current = setTimeout(() => {
+        const { instruments, patterns, sequence, bpm: songBpm } = songToZzfxm(newSong);
+        const newBuffers = zzfxMChannels(instruments, patterns, sequence, songBpm, channelIndex);
+        channelBuffersRef.current[channelIndex] = newBuffers[channelIndex];
+        audioGraphRef.current?.replaceChannel(channelIndex, newBuffers[channelIndex]);
+      }, 100);
+    }
+  }, [song]);
 
   const handlePreviewInstrument = useCallback((channelIndex: number) => {
     if (!song) return;
@@ -319,6 +377,7 @@ export default function App() {
     return () => {
       cancelAnimationFrame(rafRef.current);
       audioGraphRef.current?.stop();
+      if (volTimerRef.current) clearTimeout(volTimerRef.current);
     };
   }, []);
 
@@ -444,6 +503,7 @@ export default function App() {
           <Dropdown label="VIBE" value={vibe} options={VIBE_OPTIONS} onSelect={(v) => setVibe(v as VibeName)} />
           <Dropdown label="KEY" value={key} options={KEY_OPTIONS} onSelect={(v) => setKey(v as NoteName)} />
           <Dropdown label="SCALE" value={scale} options={SCALE_OPTIONS} onSelect={(v) => setScale(v as ScaleName)} />
+          <Dropdown label="LENGTH" value={songLength} options={LENGTH_OPTIONS} onSelect={(v) => setSongLength(v as SongLength)} />
           <Slider label="BPM" value={bpm} min={80} max={180} step={1} onValueChange={setBpm} />
         </View>
       </View>
@@ -510,6 +570,8 @@ export default function App() {
               key={ci}
               channelIndex={ci as ChannelIndex}
               params={params}
+              volume={channelVolumes[ci] ?? params[0] ?? 1}
+              onVolumeChange={(v) => handleVolumeChange(ci, v)}
               onPreview={() => handlePreviewInstrument(ci)}
               onRegenerate={() => handleRegenSingleInstrument(ci)}
             />

@@ -10,6 +10,8 @@ export { generateChordProgression } from './chords';
 export type {
   Song,
   SongConfig,
+  SongLength,
+  SectionRole,
   Pattern,
   PatternLabel,
   NoteName,

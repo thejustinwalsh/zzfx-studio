@@ -1,5 +1,5 @@
-import React, { useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import React, { useCallback, useRef } from 'react';
+import { View, Text, Pressable, StyleSheet, PanResponder } from 'react-native';
 import { colors, channelColors, type ChannelIndex } from '../theme/colors';
 import { fonts, fontSize } from '../theme/typography';
 import { spacing } from '../theme/layout';
@@ -19,6 +19,8 @@ const CHANNEL_LABELS = ['LEAD', 'HARM', 'BASS', 'DRUM'];
 interface InstrumentCardProps {
   channelIndex: ChannelIndex;
   params: number[];
+  volume: number;
+  onVolumeChange: (volume: number) => void;
   onPreview: () => void;
   onRegenerate: () => void;
 }
@@ -26,6 +28,8 @@ interface InstrumentCardProps {
 export function InstrumentCard({
   channelIndex,
   params,
+  volume,
+  onVolumeChange,
   onPreview,
   onRegenerate,
 }: InstrumentCardProps) {
@@ -35,6 +39,51 @@ export function InstrumentCard({
   const decay = params[18] ?? 0;
   const sustain = params[4] ?? 0;
   const release = params[5] ?? 0;
+
+  // Volume slider (0–1 range)
+  const trackRef = useRef<View>(null);
+  const trackLayout = useRef({ x: 0, width: 0 });
+  const fraction = Math.max(0, Math.min(1, volume));
+
+  // Use refs to avoid stale closures in PanResponder
+  const onVolumeChangeRef = useRef(onVolumeChange);
+  onVolumeChangeRef.current = onVolumeChange;
+
+  const volFromPageX = useCallback((pageX: number) => {
+    const { x, width } = trackLayout.current;
+    if (width <= 0) return 0;
+    const frac = Math.max(0, Math.min(1, (pageX - x) / width));
+    return Math.round(frac * 100) / 100;
+  }, []);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (evt) => {
+        // Measure track position for accurate pageX→fraction mapping
+        const el = trackRef.current as any;
+        if (el?.measureInWindow) {
+          el.measureInWindow((x: number, _y: number, w: number) => {
+            trackLayout.current = { x, width: w };
+            // Re-compute with fresh measurement
+            onVolumeChangeRef.current(volFromPageX(evt.nativeEvent.pageX));
+          });
+        }
+        // Also compute with existing layout (may be stale on very first touch)
+        onVolumeChangeRef.current(volFromPageX(evt.nativeEvent.pageX));
+      },
+      onPanResponderMove: (evt) => {
+        onVolumeChangeRef.current(volFromPageX(evt.nativeEvent.pageX));
+      },
+    })
+  ).current;
+
+  const onTrackLayout = useCallback(() => {
+    (trackRef.current as any)?.measureInWindow?.((x: number, _y: number, w: number) => {
+      trackLayout.current = { x, width: w };
+    });
+  }, []);
 
   return (
     <View style={styles.card}>
@@ -59,6 +108,12 @@ export function InstrumentCard({
           release={release}
           color={chColor}
         />
+
+        {/* Volume slider */}
+        <View ref={trackRef} style={styles.volTrack} onLayout={onTrackLayout} {...panResponder.panHandlers}>
+          <View style={[styles.volFill, { width: `${fraction * 100}%`, backgroundColor: chColor }]} />
+          <View style={[styles.volThumb, { left: `${fraction * 100}%` }]} />
+        </View>
 
         {/* Buttons */}
         <View style={styles.buttonRow}>
@@ -113,6 +168,31 @@ const styles = StyleSheet.create({
     fontFamily: fonts.mono,
     fontSize: fontSize.trackSub,
     color: colors.textDim,
+  },
+  volTrack: {
+    width: '100%',
+    height: 12,
+    backgroundColor: colors.bgSurface,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    justifyContent: 'center',
+    position: 'relative' as const,
+    overflow: 'hidden' as const,
+  },
+  volFill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    opacity: 0.35,
+  },
+  volThumb: {
+    position: 'absolute',
+    width: 2,
+    top: 0,
+    bottom: 0,
+    backgroundColor: colors.textPrimary,
+    marginLeft: -1,
   },
   buttonRow: {
     flexDirection: 'row',

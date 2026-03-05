@@ -1,6 +1,8 @@
 import {
   Song,
   SongConfig,
+  SongLength,
+  SectionRole,
   Pattern,
   PatternLabel,
   VibeName,
@@ -14,103 +16,123 @@ import { generateHarmonyPattern } from './harmony';
 import { generateChordProgression } from './chords';
 
 const PATTERN_LABELS: PatternLabel[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+const ROWS = 32;
 
-function generateSinglePattern(config: SongConfig): Pattern {
+// Role-based density multipliers — how each section role modifies
+// the vibe's base melody/bass density
+const ROLE_MELODY_MULTIPLIER: Record<SectionRole, number> = {
+  verse: 1.0,
+  contrast: 1.0,
+  bridge: 0.6,
+  breakdown: 0,      // no melody
+  climax: 1.4,
+};
+
+const ROLE_BASS_MULTIPLIER: Record<SectionRole, number> = {
+  verse: 1.0,
+  contrast: 1.0,
+  bridge: 0.7,
+  breakdown: 1.0,    // bass stays in breakdowns
+  climax: 1.2,
+};
+
+function generatePatternForRole(config: SongConfig, role: SectionRole): Pattern {
   const vibeConfig = VIBE_CONFIG[config.vibe];
 
-  // 0. Chord progression first — everything else reacts to this
+  // Generate chord progression — contrast/bridge/climax get fresh progressions
   const progression = generateChordProgression(config.vibe, config.key, config.scale);
 
-  // 1. Drums (structural backbone)
+  // Drums always play (backbone of every section)
   const { channelData: drumChannel, kickPattern } = generateDrumPattern(config.vibe);
 
-  // 2. Melody built around chord tones
+  // Apply role-based density scaling
+  const melodyDensity = Math.min(1, vibeConfig.melodyDensity * ROLE_MELODY_MULTIPLIER[role]);
+  const bassDensityScale = ROLE_BASS_MULTIPLIER[role];
+  const scaledBassDensity: [number, number] = [
+    Math.round(vibeConfig.bassDensity[0] * bassDensityScale),
+    Math.round(vibeConfig.bassDensity[1] * bassDensityScale),
+  ];
+
+  // Breakdown: silent lead + harmony
+  if (role === 'breakdown') {
+    const silentChannel = [0, 0, ...Array(ROWS).fill(0)];
+    const bassChannel = generateBassPattern(
+      config.key, config.scale, kickPattern,
+      scaledBassDensity, config.vibe, progression
+    );
+    return [silentChannel, silentChannel, bassChannel, drumChannel] as Pattern;
+  }
+
+  // Melody
   const melodyChannel = generateMelodyPattern(
-    config.key,
-    config.scale,
-    vibeConfig.melodyDensity,
-    progression
+    config.key, config.scale, melodyDensity, progression
   );
 
-  // 3. Bass follows chord roots + kick
+  // Bass
   const bassChannel = generateBassPattern(
-    config.key,
-    config.scale,
-    kickPattern,
-    vibeConfig.bassDensity,
-    config.vibe,
-    progression
+    config.key, config.scale, kickPattern,
+    scaledBassDensity, config.vibe, progression
   );
 
-  // 4. Harmony arpeggates chord tones, reacts to melody
-  const melodyNotes = melodyChannel.slice(2); // skip instrument + pan
+  // Harmony
+  const melodyNotes = melodyChannel.slice(2);
   const harmonyChannel = generateHarmonyPattern(
-    config.key,
-    config.scale,
-    melodyNotes,
-    progression
+    config.key, config.scale, melodyNotes, progression
   );
 
-  // 4-channel pattern: melody, harmony, bass, drums
+  // Bridge: thin out harmony further (50% chance to silence each hit)
+  if (role === 'bridge') {
+    for (let i = 2; i < harmonyChannel.length; i++) {
+      if (harmonyChannel[i] > 0 && Math.random() < 0.5) {
+        harmonyChannel[i] = 0;
+      }
+    }
+  }
+
   return [melodyChannel, harmonyChannel, bassChannel, drumChannel] as Pattern;
 }
 
-// Generate a pattern variant by regenerating with slight modifications
-function generateVariantPattern(
-  config: SongConfig,
-  _basePattern: Pattern
-): Pattern {
-  // For now, just generate a fresh pattern
-  // Future: could mutate the base pattern slightly
-  return generateSinglePattern(config);
+function pick<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
 }
 
 export function generateSong(config?: Partial<SongConfig>): Song {
   const vibe: VibeName = config?.vibe ?? 'adventure';
   const vibeConfig = VIBE_CONFIG[vibe];
+  const length: SongLength = config?.length ?? 'long';
 
   const fullConfig: SongConfig = {
     vibe,
     key: config?.key ?? 'C',
-    scale: config?.scale ?? vibeConfig.preferredScales[
-      Math.floor(Math.random() * vibeConfig.preferredScales.length)
-    ],
+    scale: config?.scale ?? pick(vibeConfig.preferredScales),
     bpm: config?.bpm ?? getRandomBpm(vibe),
+    length,
   };
 
   const instruments = generateInstruments(vibe);
-  const structure = vibeConfig.structures[
-    Math.floor(Math.random() * vibeConfig.structures.length)
-  ];
 
-  // Determine unique pattern count needed
-  const uniquePatternIndices = [...new Set(structure)].sort();
-  const patternCount = uniquePatternIndices.length;
+  // Pick a structure template for this vibe + length
+  const template = pick(vibeConfig.structures[length]);
 
-  // Generate unique patterns
+  // Generate unique patterns, each with its assigned role
   const patterns: Record<PatternLabel, Pattern> = {} as Record<PatternLabel, Pattern>;
+  const patternRoles: Record<PatternLabel, SectionRole> = {} as Record<PatternLabel, SectionRole>;
   const patternOrder: PatternLabel[] = [];
 
-  // Generate first pattern as base
-  const basePattern = generateSinglePattern(fullConfig);
-  patterns[PATTERN_LABELS[0]] = basePattern;
-  patternOrder.push(PATTERN_LABELS[0]);
-
-  // Generate variant patterns for each additional unique index
-  for (let i = 1; i < patternCount; i++) {
+  for (let i = 0; i < template.roles.length; i++) {
     const label = PATTERN_LABELS[i];
-    patterns[label] = generateVariantPattern(fullConfig, basePattern);
+    const role = template.roles[i];
+    patterns[label] = generatePatternForRole(fullConfig, role);
+    patternRoles[label] = role;
     patternOrder.push(label);
   }
-
-  // Build sequence from structure
-  const sequence = structure.map(idx => idx);
 
   return {
     config: fullConfig,
     instruments,
     patterns,
-    sequence,
+    patternRoles,
+    sequence: [...template.sequence],
     patternOrder,
   };
 }
@@ -119,7 +141,8 @@ export function regeneratePattern(
   song: Song,
   patternLabel: PatternLabel
 ): Pattern {
-  return generateSinglePattern(song.config);
+  const role = song.patternRoles[patternLabel] ?? 'verse';
+  return generatePatternForRole(song.config, role);
 }
 
 export function regenerateChannel(
@@ -129,43 +152,48 @@ export function regenerateChannel(
 ): Pattern {
   const pattern = [...song.patterns[patternLabel]] as Pattern;
   const vibeConfig = VIBE_CONFIG[song.config.vibe];
+  const role = song.patternRoles[patternLabel] ?? 'verse';
 
-  // Need a chord progression for regeneration
   const progression = generateChordProgression(
-    song.config.vibe,
-    song.config.key,
-    song.config.scale
+    song.config.vibe, song.config.key, song.config.scale
   );
+
+  const melodyMult = ROLE_MELODY_MULTIPLIER[role];
+  const bassMult = ROLE_BASS_MULTIPLIER[role];
 
   switch (channelIndex) {
     case 0: {
-      pattern[0] = generateMelodyPattern(
-        song.config.key,
-        song.config.scale,
-        vibeConfig.melodyDensity,
-        progression
-      );
+      if (role === 'breakdown') {
+        pattern[0] = [0, 0, ...Array(ROWS).fill(0)];
+      } else {
+        pattern[0] = generateMelodyPattern(
+          song.config.key, song.config.scale,
+          Math.min(1, vibeConfig.melodyDensity * melodyMult),
+          progression
+        );
+      }
       break;
     }
     case 1: {
-      const melodyNotes = pattern[0].slice(2);
-      pattern[1] = generateHarmonyPattern(
-        song.config.key,
-        song.config.scale,
-        melodyNotes,
-        progression
-      );
+      if (role === 'breakdown') {
+        pattern[1] = [0, 0, ...Array(ROWS).fill(0)];
+      } else {
+        const melodyNotes = pattern[0].slice(2);
+        pattern[1] = generateHarmonyPattern(
+          song.config.key, song.config.scale, melodyNotes, progression
+        );
+      }
       break;
     }
     case 2: {
       const kickPattern = pattern[3].slice(2).map(n => n > 0 ? 1 : 0);
       pattern[2] = generateBassPattern(
-        song.config.key,
-        song.config.scale,
-        kickPattern,
-        vibeConfig.bassDensity,
-        song.config.vibe,
-        progression
+        song.config.key, song.config.scale, kickPattern,
+        [
+          Math.round(vibeConfig.bassDensity[0] * bassMult),
+          Math.round(vibeConfig.bassDensity[1] * bassMult),
+        ],
+        song.config.vibe, progression
       );
       break;
     }
