@@ -1,0 +1,30 @@
+{
+  "name": "zzfx-gen-studio",
+  "version": "1.0.0",
+  "main": "index",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "postinstall": "npx setup-skia-web"
+  },
+  "dependencies": {
+    "@shopify/react-native-skia": "~2.4.18",
+    "canvaskit-wasm": "0.40.0",
+    "expo": "~55.0.5",
+    "expo-status-bar": "~55.0.4",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-native": "0.83.2",
+    "react-native-reanimated": "~4.2.1",
+    "react-native-web": "~0.21.2"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.0",
+    "@types/react": "~19.2.2",
+    "typescript": "~5.9.2"
+  },
+  "private": true,
+  "packageManager": "pnpm@10.28.1"
+}
