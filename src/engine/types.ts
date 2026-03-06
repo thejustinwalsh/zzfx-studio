@@ -6,6 +6,27 @@ export type VibeName = 'adventure' | 'battle' | 'dungeon' | 'titleScreen' | 'bos
 
 export type PatternLabel = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H';
 
+// Effect codes — NES/GB authentic per-note effects
+export type EffectCode = 'SU' | 'SD' | 'VB' | 'DT' | 'ST' | 'PD' | 'BC' | 'TR';
+
+export const EFFECT_CODES: EffectCode[] = ['SU', 'SD', 'VB', 'DT', 'ST', 'PD', 'BC', 'TR'];
+
+export interface NoteEffect {
+  code: EffectCode;
+  value: number; // 0x00-0xFF
+}
+
+// Per-channel effects for one pattern (parallel to 32 notes in ChannelData)
+export type ChannelEffects = (NoteEffect | null)[];
+
+// Effects for all 4 channels in one pattern
+export type PatternEffects = [ChannelEffects, ChannelEffects, ChannelEffects, ChannelEffects];
+
+export function effectToDisplayString(effect: NoteEffect | null | undefined): string {
+  if (!effect) return '----';
+  return `${effect.code}${effect.value.toString(16).toUpperCase().padStart(2, '0')}`;
+}
+
 // ZzFX 20-parameter sound array
 export type ZzFXSound = number[];
 
@@ -56,6 +77,7 @@ export interface Song {
   instruments: ZzFXSound[];
   patterns: Record<PatternLabel, Pattern>;
   patternRoles: Record<PatternLabel, SectionRole>;
+  patternEffects: Record<PatternLabel, PatternEffects>;
   sequence: number[];
   patternOrder: PatternLabel[];
 }

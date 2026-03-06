@@ -28,7 +28,8 @@ export function zzfxmToNoteName(note: number): string {
   if (note <= 0) return '---';
   const semitone = note % 12;
   const octave = Math.floor(note / 12) + 3;
-  return `${CHROMATIC[semitone]}${octave}`;
+  const name = CHROMATIC[semitone];
+  return `${name}${name.length === 1 ? '-' : ''}${octave}`;
 }
 
 export function getScaleNotes(
@@ -47,8 +48,9 @@ export function getScaleNotes(
       const noteOct = oct + Math.floor((rootIdx + interval) / 12);
       const zzfxmNote = noteToZzfxm(noteIdx, noteOct);
       if (zzfxmNote > 0 && zzfxmNote <= 48) {
+        const noteName = CHROMATIC[noteIdx];
         notes.push({
-          name: `${CHROMATIC[noteIdx]}${noteOct}`,
+          name: `${noteName}${noteName.length === 1 ? '-' : ''}${noteOct}`,
           note: zzfxmNote,
         });
       }

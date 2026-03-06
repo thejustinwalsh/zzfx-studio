@@ -106,14 +106,14 @@ type TraitName =
 type TraitFn = (p: ZzFXSound) => void;
 
 const TRAITS: Record<TraitName, TraitFn> = {
-  // Vibrato — slow pitch wobble, classic chiptune life
+  // Vibrato — slow volume wobble, classic chiptune life
   vibrato: (p) => {
-    p[12] = pick([500, 700, 900]);  // repeatTime
-    p[19] = randRange(0.15, 0.35);  // tremolo amount
+    p[12] = pick([0.2, 0.25, 0.3]);  // repeatTime in seconds (3-5 Hz)
+    p[19] = randRange(0.15, 0.35);   // tremolo amount
   },
   // Faster vibrato — more intense, nervous
   fastVibrato: (p) => {
-    p[12] = pick([250, 350, 450]);
+    p[12] = pick([0.08, 0.1, 0.14]); // repeatTime in seconds (7-12 Hz)
     p[19] = randRange(0.2, 0.45);
   },
   // Staccato — short, punchy notes
@@ -145,13 +145,13 @@ const TRAITS: Record<TraitName, TraitFn> = {
   echoed: (p) => {
     p[16] = randRange(0.02, 0.06);   // delay
   },
-  // Wobbly — frequency modulation, eerie/alien texture
+  // Wobbly — subtle frequency modulation, adds movement without bubble/whistle
   wobbly: (p) => {
-    p[14] = randRange(0.3, 1.5);     // modulation
+    p[14] = randRange(0.1, 0.4);     // modulation (low values = texture, high = bubble)
   },
   // Tremolo — volume wobble, rhythmic texture
   tremolo: (p) => {
-    p[12] = pick([300, 500, 800]);
+    p[12] = pick([0.12, 0.18, 0.25]); // repeatTime in seconds (4-8 Hz)
     p[19] = randRange(0.3, 0.6);
   },
   // Clean — no effects, pure tone. Explicitly zeroes FX params.
@@ -244,20 +244,20 @@ const VIBE_TRAITS: Record<VibeName, Record<ChannelRole, VibeTraitConfig>> = {
   dungeon: {
     lead: {
       archetypeWeights: [1, 1, 0, 0, 4],  // favor sine, some square
-      traitPool:    ['legato', 'vibrato', 'wobbly', 'echoed', 'soft', 'tremolo'],
-      traitWeights: [3,        2,         2,        2,        2,      1],
+      traitPool:    ['legato', 'vibrato', 'echoed', 'soft', 'tremolo'],
+      traitWeights: [3,        2,         2,        2,      1],
       traitCount: [1, 2],
     },
     harmony: {
       archetypeWeights: [1, 0, 3, 3, 0],  // triangle + sine pads
-      traitPool:    ['legato', 'echoed', 'wobbly', 'soft', 'tremolo'],
-      traitWeights: [3,        2,        2,        2,      1],
+      traitPool:    ['legato', 'echoed', 'soft', 'tremolo'],
+      traitWeights: [3,        2,        2,      1],
       traitCount: [1, 2],
     },
     bass: {
       archetypeWeights: [3, 0, 0, 3],  // triangle + sub-sine
-      traitPool:    ['legato', 'soft', 'wobbly', 'echoed'],
-      traitWeights: [3,        2,      1,        1],
+      traitPool:    ['legato', 'soft', 'echoed'],
+      traitWeights: [3,        2,      1],
       traitCount: [0, 2],
     },
     drums: {

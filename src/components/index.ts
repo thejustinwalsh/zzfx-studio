@@ -10,3 +10,4 @@ export { Oscilloscope, computeBarColors } from './Oscilloscope';
 export type { ChannelNote, RGB } from './Oscilloscope';
 export { InstrumentCard } from './InstrumentCard';
 export { SequenceMatrix } from './SequenceMatrix';
+export { ExportModal } from './ExportModal';

@@ -1,4 +1,5 @@
-import { Song, SongConfig, Pattern, PatternLabel, SectionRole } from './types';
+import { Song, SongConfig, Pattern, PatternLabel, PatternEffects, ChannelEffects, NoteEffect, SectionRole } from './types';
+import { songToZzfxm } from './song';
 
 // Strip trailing zeros from number arrays for compact output
 function fmtParams(arr: number[]): string {
@@ -19,7 +20,8 @@ function fmtChannel(ch: number[]): string {
   return '[' + ch.slice(0, last + 1).join(',') + ']';
 }
 
-function songToZzfxmArrays(song: Song) {
+// Logical 4-channel arrays (for JSON embed / re-import)
+function songToLogicalArrays(song: Song) {
   const patternArrays: number[][][] = [];
   for (const label of song.patternOrder) {
     patternArrays.push(song.patterns[label]);
@@ -32,26 +34,61 @@ function songToZzfxmArrays(song: Song) {
   };
 }
 
-// Full Song → JSON for lossless round-trip
+function emptyPatternEffects(): PatternEffects {
+  return [
+    Array(32).fill(null),
+    Array(32).fill(null),
+    Array(32).fill(null),
+    Array(32).fill(null),
+  ] as PatternEffects;
+}
+
+// Strip trailing zeros from a number array
+function trimZeros(arr: number[]): number[] {
+  let last = arr.length - 1;
+  while (last > 0 && (arr[last] === 0 || arr[last] === undefined)) last--;
+  return arr.slice(0, last + 1);
+}
+
+// Strip trailing nulls from an effects array, keeping only non-null entries as {row, code, value}
+function compactEffects(ch: (NoteEffect | null)[]): { r: number; c: string; v: number }[] {
+  const out: { r: number; c: string; v: number }[] = [];
+  for (let i = 0; i < ch.length; i++) {
+    if (ch[i]) out.push({ r: i, c: ch[i]!.code, v: ch[i]!.value });
+  }
+  return out;
+}
+
+// Full Song → JSON for lossless round-trip (logical format with effects)
+// Compacted: trailing zeros stripped from arrays, effects stored as sparse [{r,c,v}]
 function songToJson(song: Song): string {
-  const { instruments, patterns, sequence, bpm } = songToZzfxmArrays(song);
+  const { instruments, patterns, sequence } = songToLogicalArrays(song);
   return JSON.stringify({
-    v: 1,
+    v: 3,
     config: song.config,
     patternOrder: song.patternOrder,
     patternRoles: Object.fromEntries(
       song.patternOrder.map(l => [l, song.patternRoles[l]])
     ),
-    instruments,
-    patterns,
+    instruments: instruments.map(trimZeros),
+    patterns: patterns.map(pat => pat.map(trimZeros)),
     sequence,
+    patternEffects: song.patternOrder.map(l => {
+      const fx = song.patternEffects?.[l];
+      if (!fx) return null;
+      const compact = fx.map(compactEffects);
+      // Skip entirely empty patterns
+      if (compact.every(ch => ch.length === 0)) return null;
+      return compact;
+    }),
   });
 }
 
 // Export a usable JS file — ready to drop into a game project
-// The @zzfx-studio line embeds full song JSON for lossless re-import
+// Uses EXPANDED channels so ZzFXM playback includes effects.
+// The @zzfx-studio line embeds full logical JSON for lossless re-import.
 export function songToCode(song: Song): string {
-  const { instruments, patterns, sequence, bpm } = songToZzfxmArrays(song);
+  const expanded = songToZzfxm(song);
 
   const lines: string[] = [];
 
@@ -60,20 +97,20 @@ export function songToCode(song: Song): string {
   lines.push(`// @zzfx-studio ${songToJson(song)}`);
   lines.push('');
 
-  // Human-readable, usable JS
+  // Human-readable, usable JS (expanded channels for correct playback)
   lines.push('let instruments = [');
-  for (const inst of instruments) {
+  for (const inst of expanded.instruments) {
     lines.push('  ' + fmtParams(inst) + ',');
   }
   lines.push('];');
   lines.push('');
 
   lines.push('let patterns = [');
-  for (let pi = 0; pi < patterns.length; pi++) {
+  for (let pi = 0; pi < expanded.patterns.length; pi++) {
     const label = song.patternOrder[pi];
     const role = song.patternRoles[label];
     lines.push(`  [ // ${label} (${role})`);
-    for (const ch of patterns[pi]) {
+    for (const ch of expanded.patterns[pi]) {
       lines.push('    ' + fmtChannel(ch) + ',');
     }
     lines.push('  ],');
@@ -81,25 +118,25 @@ export function songToCode(song: Song): string {
   lines.push('];');
   lines.push('');
 
-  lines.push(`let sequence = [${sequence.join(',')}];`);
-  lines.push(`let BPM = ${bpm};`);
+  lines.push(`let sequence = [${expanded.sequence.join(',')}];`);
+  lines.push(`let BPM = ${expanded.bpm};`);
   lines.push('');
-  lines.push('// Usage: zzfxP(...zzfxM(instruments, patterns, sequence, BPM));');
+  lines.push('zzfxP(...zzfxM(instruments, patterns, sequence, BPM));');
 
   return lines.join('\n');
 }
 
-// Compact one-liner for clipboard
+// Compact one-liner for clipboard (expanded for correct playback)
 export function songToClipboard(song: Song): string {
-  const { instruments, patterns, sequence, bpm } = songToZzfxmArrays(song);
+  const expanded = songToZzfxm(song);
 
-  const instStr = '[' + instruments.map(i => fmtParamsCompact(i)).join(',') + ']';
-  const patStr = '[' + patterns.map(pat =>
+  const instStr = '[' + expanded.instruments.map(i => fmtParamsCompact(i)).join(',') + ']';
+  const patStr = '[' + expanded.patterns.map(pat =>
     '[' + pat.map(ch => fmtChannel(ch)).join(',') + ']'
   ).join(',') + ']';
-  const seqStr = '[' + sequence.join(',') + ']';
+  const seqStr = '[' + expanded.sequence.join(',') + ']';
 
-  return `zzfxM(${instStr},${patStr},${seqStr},${bpm})`;
+  return `zzfxM(${instStr},${patStr},${seqStr},${expanded.bpm})`;
 }
 
 // Import: parse the @zzfx-studio JSON line
@@ -121,6 +158,7 @@ export function codeToSong(code: string): Song | null {
     const patternOrder: PatternLabel[] = data.patternOrder;
     const patternRoles = {} as Record<PatternLabel, SectionRole>;
     const patternMap = {} as Record<PatternLabel, Pattern>;
+    const patternEffects = {} as Record<PatternLabel, PatternEffects>;
 
     for (let i = 0; i < patternOrder.length; i++) {
       const label = patternOrder[i];
@@ -132,6 +170,30 @@ export function codeToSong(code: string): Song | null {
         while (ch.length < 34) ch.push(0);
       }
       patternMap[label] = pat as Pattern;
+
+      // Effects: v3 = sparse [{r,c,v}], v2 = dense [null|{code,value}], v1 = none
+      const rawFx = data.patternEffects?.[i];
+      if (data.v >= 3 && rawFx) {
+        // Sparse format: each channel is array of {r, c, v}
+        const expanded: PatternEffects = [
+          Array(32).fill(null),
+          Array(32).fill(null),
+          Array(32).fill(null),
+          Array(32).fill(null),
+        ];
+        for (let ch = 0; ch < 4; ch++) {
+          if (rawFx[ch]) {
+            for (const entry of rawFx[ch]) {
+              expanded[ch][entry.r] = { code: entry.c, value: entry.v } as NoteEffect;
+            }
+          }
+        }
+        patternEffects[label] = expanded;
+      } else if (data.v >= 2 && rawFx) {
+        patternEffects[label] = rawFx as PatternEffects;
+      } else {
+        patternEffects[label] = emptyPatternEffects();
+      }
     }
 
     return {
@@ -139,6 +201,7 @@ export function codeToSong(code: string): Song | null {
       instruments: data.instruments,
       patterns: patternMap,
       patternRoles,
+      patternEffects,
       sequence: data.sequence,
       patternOrder,
     };

@@ -9,6 +9,7 @@ import {
   Oscilloscope,
   InstrumentCard,
   SequenceMatrix,
+  ExportModal,
   computeBarColors,
 } from './src/components';
 import type { ChannelNote, RGB } from './src/components';
@@ -16,20 +17,18 @@ import {
   generateSong,
   regeneratePattern,
   regenerateChannel,
-  songToZzfxm,
+  renderSongBuffers,
   generateInstruments,
-  zzfxMChannels,
   zzfxP,
   zzfxG,
   unlockAudio,
   AudioGraph,
   zzfxmToNoteName,
   drumNoteToName,
+  effectToDisplayString,
   CHROMATIC,
   SCALES,
   VIBE_CONFIG,
-  songToCode,
-  songToClipboard,
   codeToSong,
 } from './src/engine';
 import type { Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel } from './src/engine';
@@ -75,6 +74,7 @@ export default function App() {
   const [playbackRow, setPlaybackRow] = useState<number | null>(null);
   const [playbackPatternIdx, setPlaybackPatternIdx] = useState(0);
   const [flashChannels, setFlashChannels] = useState<Set<number>>(new Set());
+  const [showExport, setShowExport] = useState(false);
 
   // Refs
   const audioGraphRef = useRef<AudioGraph | null>(null);
@@ -177,8 +177,7 @@ export default function App() {
       const newSong = { ...currentSong, config: { ...currentSong.config, bpm } };
       setSong(newSong);
 
-      const { instruments, patterns, sequence } = songToZzfxm(newSong);
-      const buffers = zzfxMChannels(instruments, patterns, sequence, bpm);
+      const buffers = renderSongBuffers(newSong);
       if (buffers.length === 0 || buffers[0][0].length === 0) return;
 
       channelBuffersRef.current = buffers;
@@ -222,13 +221,12 @@ export default function App() {
       cancelAnimationFrame(rafRef.current);
     }
 
-    const { instruments, patterns, sequence, bpm: songBpm } = songToZzfxm(currentSong);
-    const buffers = zzfxMChannels(instruments, patterns, sequence, songBpm);
+    const buffers = renderSongBuffers(currentSong);
     if (buffers.length === 0 || buffers[0][0].length === 0) return;
 
     channelBuffersRef.current = buffers;
     const songDuration = buffers[0][0].length / 44100;
-    ag.play(buffers, songDuration, songBpm);
+    ag.play(buffers, songDuration, currentSong.config.bpm);
 
     // Apply current mute/solo state
     for (let ch = 0; ch < 4; ch++) {
@@ -249,10 +247,11 @@ export default function App() {
   const handleRegenPattern = useCallback((label: PatternLabel) => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong) return;
-    const newPattern = regeneratePattern(currentSong, label);
+    const { pattern, effects } = regeneratePattern(currentSong, label);
     setSong({
       ...currentSong,
-      patterns: { ...currentSong.patterns, [label]: newPattern },
+      patterns: { ...currentSong.patterns, [label]: pattern },
+      patternEffects: { ...currentSong.patternEffects, [label]: effects },
     });
     flashChannel([0, 1, 2, 3]);
   }, [flashChannel]);
@@ -260,20 +259,20 @@ export default function App() {
   const handleRegenChannel = useCallback((channelIndex: number) => {
     const { song: currentSong, activePattern: ap } = useSongStore.getState();
     if (!currentSong) return;
-    const newPattern = regenerateChannel(currentSong, ap, channelIndex);
+    const { pattern, effects } = regenerateChannel(currentSong, ap, channelIndex);
     const newSong = {
       ...currentSong,
-      patterns: { ...currentSong.patterns, [ap]: newPattern },
+      patterns: { ...currentSong.patterns, [ap]: pattern },
+      patternEffects: { ...currentSong.patternEffects, [ap]: effects },
     };
     setSong(newSong);
     flashChannel([channelIndex]);
 
     // Hot-swap while playing
     if (audioGraphRef.current?.isPlaying) {
-      const { instruments, patterns, sequence, bpm: songBpm } = songToZzfxm(newSong);
-      const newBuffers = zzfxMChannels(instruments, patterns, sequence, songBpm, channelIndex);
-      channelBuffersRef.current[channelIndex] = newBuffers[channelIndex];
-      audioGraphRef.current.replaceChannel(channelIndex, newBuffers[channelIndex]);
+      const buffers = renderSongBuffers(newSong);
+      channelBuffersRef.current[channelIndex] = buffers[channelIndex];
+      audioGraphRef.current.replaceChannel(channelIndex, buffers[channelIndex]);
     }
   }, [flashChannel]);
 
@@ -294,10 +293,9 @@ export default function App() {
 
     // Hot-swap while playing
     if (audioGraphRef.current?.isPlaying) {
-      const { instruments, patterns, sequence, bpm: songBpm } = songToZzfxm(newSong);
-      const newBuffers = zzfxMChannels(instruments, patterns, sequence, songBpm, channelIndex);
-      channelBuffersRef.current[channelIndex] = newBuffers[channelIndex];
-      audioGraphRef.current.replaceChannel(channelIndex, newBuffers[channelIndex]);
+      const buffers = renderSongBuffers(newSong);
+      channelBuffersRef.current[channelIndex] = buffers[channelIndex];
+      audioGraphRef.current.replaceChannel(channelIndex, buffers[channelIndex]);
     }
   }, []);
 
@@ -310,10 +308,9 @@ export default function App() {
       volTimerRef.current = setTimeout(() => {
         const currentSong = useSongStore.getState().song;
         if (!currentSong) return;
-        const { instruments, patterns, sequence, bpm: songBpm } = songToZzfxm(currentSong);
-        const newBuffers = zzfxMChannels(instruments, patterns, sequence, songBpm, channelIndex);
-        channelBuffersRef.current[channelIndex] = newBuffers[channelIndex];
-        audioGraphRef.current?.replaceChannel(channelIndex, newBuffers[channelIndex]);
+        const buffers = renderSongBuffers(currentSong);
+        channelBuffersRef.current[channelIndex] = buffers[channelIndex];
+        audioGraphRef.current?.replaceChannel(channelIndex, buffers[channelIndex]);
       }, 100);
     }
   }, []);
@@ -332,36 +329,7 @@ export default function App() {
     }
   }, []);
 
-  // Export / Import / Copy
-  const handleExport = useCallback(() => {
-    const currentSong = useSongStore.getState().song;
-    if (!currentSong) return;
-    const code = songToCode(currentSong);
-    const blob = new Blob([code], { type: 'text/javascript' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `zzfx-${currentSong.config.vibe}-${currentSong.config.key}-${currentSong.config.scale}.js`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, []);
-
-  const handleCopy = useCallback(async () => {
-    const currentSong = useSongStore.getState().song;
-    if (!currentSong) return;
-    const code = songToClipboard(currentSong);
-    try {
-      await navigator.clipboard.writeText(code);
-    } catch {
-      const ta = document.createElement('textarea');
-      ta.value = code;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-    }
-  }, []);
-
+  // Export / Import
   const handleImport = useCallback(() => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -392,6 +360,7 @@ export default function App() {
   }, []);
 
   const currentPattern = song && song.patterns[activePattern];
+  const currentEffects = song?.patternEffects?.[activePattern];
 
   // Precompute per-row bar colors for the playing pattern's oscilloscope
   const BAR_COUNT = 64;
@@ -512,13 +481,7 @@ export default function App() {
             <Text style={styles.sectionLabel}>SEQUENCE</Text>
             <View style={styles.sequenceActions}>
               <Pressable
-                onPress={handleCopy}
-                style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.6 }]}
-              >
-                <Text style={styles.actionBtnText}>COPY</Text>
-              </Pressable>
-              <Pressable
-                onPress={handleExport}
+                onPress={() => setShowExport(true)}
                 style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.6 }]}
               >
                 <Text style={styles.actionBtnText}>EXPORT</Text>
@@ -681,7 +644,12 @@ export default function App() {
                   const noteName = ci === 3
                     ? drumNoteToName(noteVal)
                     : zzfxmToNoteName(noteVal);
+                  const fx = currentEffects?.[ci]?.[row];
+                  const fxStr = effectToDisplayString(fx);
                   const isFlashing = flashChannels.has(ci);
+                  const noteColor = noteVal > 0
+                    ? (effectiveMutes.has(ci) ? colors.textDim : CHANNEL_COLORS[ci])
+                    : colors.textDim;
                   return (
                     <View
                       key={ci}
@@ -693,15 +661,11 @@ export default function App() {
                       <Text
                         style={[
                           styles.noteText,
-                          {
-                            color: noteVal > 0
-                              ? (effectiveMutes.has(ci) ? colors.textDim : CHANNEL_COLORS[ci])
-                              : colors.textDim,
-                          },
                           isCursor && noteVal > 0 && styles.noteTextCursor,
                         ]}
                       >
-                        {noteName}
+                        <Text style={{ color: noteColor }}>{noteName}</Text>
+                        <Text style={{ color: fx ? noteColor : colors.textDim }}>{` ${fxStr}`}</Text>
                       </Text>
                     </View>
                   );
@@ -711,6 +675,15 @@ export default function App() {
           })}
         </ScrollView>
       ) : null}
+
+      {/* Export Modal */}
+      {song && (
+        <ExportModal
+          visible={showExport}
+          song={song}
+          onClose={() => setShowExport(false)}
+        />
+      )}
     </View>
   );
 }
