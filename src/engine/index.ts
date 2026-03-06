@@ -9,6 +9,7 @@ export { VIBE_CONFIG, getRandomBpm } from './vibes';
 export { generateChordProgression } from './chords';
 export { songToCode, songToClipboard, codeToSong } from './serialize';
 export { applyEffect, generatePatternEffects, generateChannelEffects } from './effects';
+export { generateSongName } from './songNames';
 export type {
   Song,
   SongConfig,

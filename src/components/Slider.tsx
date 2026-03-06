@@ -76,7 +76,7 @@ export function Slider({ label, value, min, max, step = 1, onValueChange, format
 
 const styles = StyleSheet.create({
   wrapper: {
-    gap: spacing.sm,
+    gap: spacing.xs,
   },
   wrapperCompact: {
     flexDirection: 'row',
@@ -110,7 +110,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
   label: {
     fontFamily: fonts.mono,

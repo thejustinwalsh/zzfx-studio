@@ -1,5 +1,7 @@
 import React, { useCallback, useRef } from 'react';
-import { View, Text, Pressable, StyleSheet, PanResponder } from 'react-native';
+import { View, Text, StyleSheet, PanResponder } from 'react-native';
+import type { SharedValue } from 'react-native-reanimated';
+import { AnimatedPressable } from './AnimatedPressable';
 import { colors, channelColors, type ChannelIndex } from '../theme/colors';
 import { fonts, fontSize } from '../theme/typography';
 import { spacing } from '../theme/layout';
@@ -23,6 +25,7 @@ interface InstrumentCardProps {
   onVolumeChange: (volume: number) => void;
   onPreview: () => void;
   onRegenerate: () => void;
+  adsrProgress?: SharedValue<number | null>;
 }
 
 export function InstrumentCard({
@@ -32,6 +35,7 @@ export function InstrumentCard({
   onVolumeChange,
   onPreview,
   onRegenerate,
+  adsrProgress,
 }: InstrumentCardProps) {
   const chColor = channelColors[channelIndex].primary;
   const shape = params[6] ?? 0;
@@ -107,6 +111,7 @@ export function InstrumentCard({
           sustain={sustain}
           release={release}
           color={chColor}
+          progress={adsrProgress}
         />
 
         {/* Volume slider */}
@@ -117,18 +122,18 @@ export function InstrumentCard({
 
         {/* Buttons */}
         <View style={styles.buttonRow}>
-          <Pressable
+          <AnimatedPressable
             onPress={onPreview}
-            style={({ pressed }) => [styles.btn, pressed && styles.btnPressed]}
+            style={styles.btn}
           >
             <Text style={[styles.btnText, { color: chColor }]}>PLAY</Text>
-          </Pressable>
-          <Pressable
+          </AnimatedPressable>
+          <AnimatedPressable
             onPress={onRegenerate}
-            style={({ pressed }) => [styles.btnRegen, pressed && styles.btnPressed]}
+            style={styles.btnRegen}
           >
             <Text style={styles.btnRegenText}>R</Text>
-          </Pressable>
+          </AnimatedPressable>
         </View>
       </View>
     </View>
@@ -208,9 +213,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bgSurface,
     borderWidth: 1,
     borderColor: colors.borderSubtle,
-  },
-  btnPressed: {
-    opacity: 0.6,
   },
   btnText: {
     fontFamily: fonts.mono,

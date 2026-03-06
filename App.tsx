@@ -1,6 +1,8 @@
-import { useRef, useCallback, useEffect, useMemo } from 'react';
+import { useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
+import { useSharedValue } from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View, ScrollView, Pressable } from 'react-native';
+import { StyleSheet, Text, View, ScrollView } from 'react-native';
+import { AnimatedPressable } from './src/components/AnimatedPressable';
 import { colors, fonts, fontSize, spacing } from './src/theme';
 import {
   Dropdown,
@@ -10,6 +12,9 @@ import {
   InstrumentCard,
   SequenceMatrix,
   ExportModal,
+  LoadModal,
+  BrandTitle,
+  RetroAvatar,
   computeBarColors,
 } from './src/components';
 import type { ChannelNote, RGB } from './src/components';
@@ -33,7 +38,8 @@ import {
 } from './src/engine';
 import type { Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel } from './src/engine';
 import type { ChannelIndex } from './src/theme/colors';
-import { useSongStore, initializeStore } from './src/store';
+import { getPatternColor, getPatternLabelColor, getPatternActiveColor, getPatternActiveLabelColor, getPatternActiveBorderColor } from './src/utils/patternColors';
+import { useSongStore, initializeStore, useStoreHydrated } from './src/store';
 import { useState } from 'react';
 
 function pick<T>(arr: readonly T[]): T {
@@ -47,10 +53,12 @@ const LENGTH_OPTIONS: SongLength[] = ['short', 'long', 'epic'];
 const CHANNEL_NAMES = ['LEAD', 'HARM', 'BASS', 'DRUM'];
 const CHANNEL_COLORS = [colors.ch0Primary, colors.ch1Primary, colors.ch2Primary, colors.ch3Primary];
 
-// Initialize store on app load (generates random song if none persisted)
+// Initialize store after hydration (generates random song if none persisted)
 initializeStore();
 
 export default function App() {
+  const hydrated = useStoreHydrated();
+
   // Persisted state from store
   const song = useSongStore(s => s.song);
   const vibe = useSongStore(s => s.vibe);
@@ -75,6 +83,17 @@ export default function App() {
   const [playbackPatternIdx, setPlaybackPatternIdx] = useState(0);
   const [flashChannels, setFlashChannels] = useState<Set<number>>(new Set());
   const [showExport, setShowExport] = useState(false);
+  const [showLoad, setShowLoad] = useState(false);
+
+  // ADSR progress shared values — driven from RAF, consumed by WaveformPreview on UI thread
+  const adsrProgress0 = useSharedValue<number | null>(null);
+  const adsrProgress1 = useSharedValue<number | null>(null);
+  const adsrProgress2 = useSharedValue<number | null>(null);
+  const adsrProgress3 = useSharedValue<number | null>(null);
+  const adsrProgressValues = useMemo(
+    () => [adsrProgress0, adsrProgress1, adsrProgress2, adsrProgress3],
+    [adsrProgress0, adsrProgress1, adsrProgress2, adsrProgress3]
+  );
 
   // Refs
   const audioGraphRef = useRef<AudioGraph | null>(null);
@@ -82,6 +101,9 @@ export default function App() {
   const rafRef = useRef<number>(0);
   const bpmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const volTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gridScrollRef = useRef<ScrollView>(null);
+  const gridRowHeight = useRef(0);
+  const gridHeaderHeight = useRef(0);
 
   // Lazy-init AudioGraph
   const getAudioGraph = useCallback(() => {
@@ -108,6 +130,39 @@ export default function App() {
     return muted;
   }, [getEffectiveGain]);
 
+  // Eagerly pre-render audio buffers when song changes so play is instant
+  useEffect(() => {
+    if (!song) return;
+    const buffers = renderSongBuffers(song);
+    if (buffers.length > 0 && buffers[0][0].length > 0) {
+      channelBuffersRef.current = buffers;
+    }
+  }, [song]);
+
+  // Compute fixed section colors per pattern label
+  const patternColorMap = useMemo(() => {
+    if (!song) return {
+      bg: {} as Record<string, string>,
+      label: {} as Record<string, string>,
+      activeBg: {} as Record<string, string>,
+      activeLabel: {} as Record<string, string>,
+      activeBorder: {} as Record<string, string>,
+    };
+    const bgMap: Record<string, string> = {};
+    const labelMap: Record<string, string> = {};
+    const activeBgMap: Record<string, string> = {};
+    const activeLabelMap: Record<string, string> = {};
+    const activeBorderMap: Record<string, string> = {};
+    for (const lbl of song.patternOrder) {
+      bgMap[lbl] = getPatternColor(song.patterns[lbl], lbl);
+      labelMap[lbl] = getPatternLabelColor(song.patterns[lbl], lbl);
+      activeBgMap[lbl] = getPatternActiveColor(lbl);
+      activeLabelMap[lbl] = getPatternActiveLabelColor(lbl);
+      activeBorderMap[lbl] = getPatternActiveBorderColor(lbl);
+    }
+    return { bg: bgMap, label: labelMap, activeBg: activeBgMap, activeLabel: activeLabelMap, activeBorder: activeBorderMap };
+  }, [song]);
+
   // Apply gains to audio graph whenever mute/solo changes
   useEffect(() => {
     const ag = audioGraphRef.current;
@@ -117,7 +172,25 @@ export default function App() {
     }
   }, [getEffectiveGain]);
 
+  const clearAdsrProgress = useCallback(() => {
+    for (const sv of adsrProgressValues) sv.value = null;
+  }, [adsrProgressValues]);
+
+  const stopPlayback = useCallback(() => {
+    audioGraphRef.current?.stop();
+    setIsPlaying(false);
+    setPlaybackRow(null);
+    prevRowRef.current = null;
+    prevPatIdxRef.current = null;
+    clearAdsrProgress();
+    cancelAnimationFrame(rafRef.current);
+  }, [clearAdsrProgress]);
+
   // Playback position tracking via RAF using AudioGraph's audio clock
+  // Track previous values to avoid unnecessary React re-renders
+  const prevRowRef = useRef<number | null>(null);
+  const prevPatIdxRef = useRef<number | null>(null);
+
   const updatePlaybackPosition = useCallback(() => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong || !audioGraphRef.current) return;
@@ -128,13 +201,61 @@ export default function App() {
 
     const patIdx = Math.floor(elapsed / patternDuration) % currentSong.sequence.length;
     const row = Math.floor((elapsed % patternDuration) / rowDuration);
-    setPlaybackRow(row);
-    setPlaybackPatternIdx(patIdx);
-    const label = currentSong.patternOrder[currentSong.sequence[patIdx]];
-    if (label) setActivePattern(label);
+
+    // Only trigger React re-renders when values actually change
+    if (row !== prevRowRef.current) {
+      prevRowRef.current = row;
+      setPlaybackRow(row);
+    }
+    if (patIdx !== prevPatIdxRef.current) {
+      prevPatIdxRef.current = patIdx;
+      setPlaybackPatternIdx(patIdx);
+      const label = currentSong.patternOrder[currentSong.sequence[patIdx]];
+      if (label) setActivePattern(label);
+    }
+
+    // Compute continuous ADSR progress per channel (writes to shared values, no re-render)
+    const activePatLabel = currentSong.patternOrder[currentSong.sequence[patIdx]];
+    const pat = activePatLabel ? currentSong.patterns[activePatLabel] : null;
+    if (pat) {
+      const elapsedInPattern = elapsed % patternDuration;
+      for (let ci = 0; ci < 4; ci++) {
+        const params = currentSong.instruments[ci];
+        // Find most recent note at or before current position
+        let noteRow = -1;
+        for (let r = row; r >= 0; r--) {
+          if (pat[ci][r + 2] > 0) {
+            noteRow = r;
+            break;
+          }
+        }
+        if (noteRow >= 0) {
+          // Use continuous time for smooth cursor, not discrete row
+          const noteTime = noteRow * rowDuration;
+          const timeSinceNote = elapsedInPattern - noteTime;
+          const attack = params[3] ?? 0;
+          const decay = params[18] ?? 0;
+          const sustain = params[4] ?? 0;
+          const release = params[5] ?? 0;
+          const totalDuration = attack + decay + sustain + release;
+          if (totalDuration > 0) {
+            const p = timeSinceNote / totalDuration;
+            adsrProgressValues[ci].value = p <= 1 ? Math.max(0, Math.min(1, p)) : null;
+          } else {
+            adsrProgressValues[ci].value = null;
+          }
+        } else {
+          adsrProgressValues[ci].value = null;
+        }
+      }
+    } else {
+      for (let ci = 0; ci < 4; ci++) {
+        adsrProgressValues[ci].value = null;
+      }
+    }
 
     rafRef.current = requestAnimationFrame(updatePlaybackPosition);
-  }, []);
+  }, [adsrProgressValues]);
 
   // Generation flash effect
   const flashChannel = useCallback((channels: number[]) => {
@@ -142,23 +263,24 @@ export default function App() {
     setTimeout(() => setFlashChannels(new Set()), 150);
   }, []);
 
-  // Auto-regen when vibe/key/scale/length changes
+  // Skip auto-regen when generate() was called directly (e.g. reroll)
+  const skipAutoRegen = useRef(false);
+
+  // Auto-regen when vibe/key/scale/length changes (from dropdown selections)
   const isInitialMount = useRef(true);
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
       return;
     }
+    if (skipAutoRegen.current) {
+      skipAutoRegen.current = false;
+      return;
+    }
     generate(vibe, key, scale, bpm, songLength);
     flashChannel([0, 1, 2, 3]);
-    // Stop playback
-    if (audioGraphRef.current?.isPlaying) {
-      audioGraphRef.current.stop();
-      setIsPlaying(false);
-      setPlaybackRow(null);
-      cancelAnimationFrame(rafRef.current);
-    }
-  }, [vibe, key, scale, songLength]);
+    if (audioGraphRef.current?.isPlaying) stopPlayback();
+  }, [vibe, key, scale, songLength, stopPlayback]);
 
   // Live BPM change — debounced re-render + hot-swap while playing
   useEffect(() => {
@@ -198,16 +320,11 @@ export default function App() {
     const newKey = pick(KEY_OPTIONS);
     const newScale = pick(vibeConf.preferredScales);
     const newBpm = vibeConf.bpmRange[0] + Math.floor(Math.random() * (vibeConf.bpmRange[1] - vibeConf.bpmRange[0] + 1));
+    skipAutoRegen.current = true;
     generate(newVibe, newKey, newScale, newBpm, useSongStore.getState().songLength);
     flashChannel([0, 1, 2, 3]);
-    // Stop playback
-    if (audioGraphRef.current?.isPlaying) {
-      audioGraphRef.current.stop();
-      setIsPlaying(false);
-      setPlaybackRow(null);
-      cancelAnimationFrame(rafRef.current);
-    }
-  }, [flashChannel]);
+    if (audioGraphRef.current?.isPlaying) stopPlayback();
+  }, [flashChannel, stopPlayback]);
 
   const handlePlay = useCallback(() => {
     const currentSong = useSongStore.getState().song;
@@ -221,10 +338,14 @@ export default function App() {
       cancelAnimationFrame(rafRef.current);
     }
 
-    const buffers = renderSongBuffers(currentSong);
+    // Use pre-rendered buffers if available, otherwise render now
+    let buffers = channelBuffersRef.current;
+    if (buffers.length === 0 || buffers[0][0].length === 0) {
+      buffers = renderSongBuffers(currentSong);
+      channelBuffersRef.current = buffers;
+    }
     if (buffers.length === 0 || buffers[0][0].length === 0) return;
 
-    channelBuffersRef.current = buffers;
     const songDuration = buffers[0][0].length / 44100;
     ag.play(buffers, songDuration, currentSong.config.bpm);
 
@@ -238,11 +359,8 @@ export default function App() {
   }, [updatePlaybackPosition, getEffectiveGain, getAudioGraph]);
 
   const handleStop = useCallback(() => {
-    audioGraphRef.current?.stop();
-    setIsPlaying(false);
-    setPlaybackRow(null);
-    cancelAnimationFrame(rafRef.current);
-  }, []);
+    stopPlayback();
+  }, [stopPlayback]);
 
   const handleRegenPattern = useCallback((label: PatternLabel) => {
     const currentSong = useSongStore.getState().song;
@@ -341,14 +459,10 @@ export default function App() {
       const imported = codeToSong(text);
       if (!imported) return;
       loadSong(imported);
-      if (audioGraphRef.current?.isPlaying) {
-        audioGraphRef.current.stop();
-        setIsPlaying(false);
-        setPlaybackRow(null);
-      }
+      if (audioGraphRef.current?.isPlaying) stopPlayback();
     };
     input.click();
-  }, []);
+  }, [stopPlayback]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -361,6 +475,21 @@ export default function App() {
 
   const currentPattern = song && song.patterns[activePattern];
   const currentEffects = song?.patternEffects?.[activePattern];
+
+  // Grid scroll measurement refs
+  const gridScrollHeight = useRef(0);
+  const gridContentHeight = useRef(0);
+
+  // Scroll grid after React renders the new cursor position, before browser paints
+  useLayoutEffect(() => {
+    if (playbackRow == null || !isPlaying || !gridScrollRef.current || gridRowHeight.current <= 0) return;
+    const rowH = gridRowHeight.current;
+    const headerH = gridHeaderHeight.current;
+    const READ_AHEAD = 4;
+    const desiredY = headerH + (playbackRow + READ_AHEAD + 1) * rowH - gridScrollHeight.current;
+    const y = Math.max(0, desiredY);
+    gridScrollRef.current.scrollTo({ y, animated: false });
+  }, [playbackRow, isPlaying]);
 
   // Precompute per-row bar colors for the playing pattern's oscilloscope
   const BAR_COUNT = 64;
@@ -444,26 +573,42 @@ export default function App() {
     );
   }, [song, currentPattern]);
 
+  if (!hydrated) {
+    return (
+      <View style={styles.root}>
+        <StatusBar style="light" />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.root}>
       <StatusBar style="light" />
 
+      {/* Brand label — top left, outside header */}
+      <View style={styles.brandBar}>
+        <BrandTitle />
+      </View>
+
       {/* Header / Controls */}
       <View style={styles.header}>
-        <Text style={styles.title}>ZZFX STUDIO</Text>
+        <View style={styles.titleLeft}>
+          {song && <RetroAvatar name={song.config.name} size={16} color={colors.accentPrimary} />}
+          <Text style={styles.title}>{song?.config.name ?? 'ZZFX STUDIO'}</Text>
+        </View>
         <View style={styles.controls}>
           <View style={styles.transportWrapper}>
             <View style={styles.transportSpacer} />
             <View style={styles.transport}>
-              <Pressable onPress={handleReroll} style={({ pressed }) => [styles.transportBtn, styles.transportBtnRegen, pressed && { opacity: 0.6 }]}>
+              <AnimatedPressable onPress={handleReroll} style={[styles.transportBtn, styles.transportBtnRegen]}>
                 <Text style={[styles.transportIcon, styles.transportIconRegen, { color: colors.accentGenerate }]}>⟳</Text>
-              </Pressable>
-              <Pressable onPress={handlePlay} disabled={!song} style={({ pressed }) => [styles.transportBtn, isPlaying && styles.transportBtnActive, pressed && { opacity: 0.6 }, !song && { opacity: 0.4 }]}>
+              </AnimatedPressable>
+              <AnimatedPressable onPress={handlePlay} disabled={!song} style={[styles.transportBtn, isPlaying && styles.transportBtnActive, !song && { opacity: 0.4 }]}>
                 <Text style={[styles.transportIcon, isPlaying && styles.transportIconActive]}>▶</Text>
-              </Pressable>
-              <Pressable onPress={handleStop} disabled={!isPlaying} style={({ pressed }) => [styles.transportBtn, pressed && { opacity: 0.6 }, !isPlaying && { opacity: 0.4 }]}>
+              </AnimatedPressable>
+              <AnimatedPressable onPress={handleStop} disabled={!isPlaying} style={[styles.transportBtn, !isPlaying && { opacity: 0.4 }]}>
                 <Text style={[styles.transportIcon, { color: colors.accentStop }]}>■</Text>
-              </Pressable>
+              </AnimatedPressable>
             </View>
           </View>
           <Dropdown label="VIBE" value={vibe} options={VIBE_OPTIONS} onSelect={(v) => setVibe(v as VibeName)} />
@@ -480,18 +625,24 @@ export default function App() {
           <View style={styles.sequenceHeader}>
             <Text style={styles.sectionLabel}>SEQUENCE</Text>
             <View style={styles.sequenceActions}>
-              <Pressable
-                onPress={() => setShowExport(true)}
-                style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.6 }]}
+              <AnimatedPressable
+                onPress={() => setShowLoad(true)}
+                style={styles.actionBtn}
               >
-                <Text style={styles.actionBtnText}>EXPORT</Text>
-              </Pressable>
-              <Pressable
+                <Text style={styles.actionBtnText}>LOAD</Text>
+              </AnimatedPressable>
+              <AnimatedPressable
                 onPress={handleImport}
-                style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.6 }]}
+                style={styles.actionBtn}
               >
                 <Text style={styles.actionBtnText}>IMPORT</Text>
-              </Pressable>
+              </AnimatedPressable>
+              <AnimatedPressable
+                onPress={() => setShowExport(true)}
+                style={styles.actionBtn}
+              >
+                <Text style={styles.actionBtnText}>EXPORT</Text>
+              </AnimatedPressable>
             </View>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -500,17 +651,23 @@ export default function App() {
                 const label = song.patternOrder[patIdx];
                 const isPlayingThis = isPlaying && i === playbackPatternIdx;
                 return (
-                  <Pressable
+                  <AnimatedPressable
                     key={`${i}-${label}`}
                     onLongPress={() => handleRegenPattern(label)}
+                    animateScale={false}
                   >
                     <PatternBlock
                       label={label}
                       active={activePattern === label}
                       playing={isPlayingThis}
                       onPress={() => setActivePattern(label)}
+                      patternColor={patternColorMap.bg[label]}
+                      labelColor={patternColorMap.label[label]}
+                      activeColor={patternColorMap.activeBg[label]}
+                      activeLabelColor={patternColorMap.activeLabel[label]}
+                      activeBorderColor={patternColorMap.activeBorder[label]}
                     />
-                  </Pressable>
+                  </AnimatedPressable>
                 );
               })}
             </View>
@@ -538,26 +695,39 @@ export default function App() {
             playbackPatternIdx={playbackPatternIdx}
             playbackRow={playbackRow}
             isPlaying={isPlaying}
+            patternColors={patternColorMap.bg}
+            labelColors={patternColorMap.label}
+            activeBorderColors={patternColorMap.activeBorder}
+            activeLabelColors={patternColorMap.activeLabel}
           />
-          {song.instruments.map((params, ci) => (
-            <InstrumentCard
-              key={ci}
-              channelIndex={ci as ChannelIndex}
-              params={params}
-              volume={channelVolumes[ci] ?? params[0] ?? 1}
-              onVolumeChange={(v) => handleVolumeChange(ci, v)}
-              onPreview={() => handlePreviewInstrument(ci)}
-              onRegenerate={() => handleRegenSingleInstrument(ci)}
-            />
-          ))}
+          {song.instruments.map((params, ci) => {
+            return (
+              <InstrumentCard
+                key={ci}
+                channelIndex={ci as ChannelIndex}
+                params={params}
+                volume={channelVolumes[ci] ?? params[0] ?? 1}
+                onVolumeChange={(v) => handleVolumeChange(ci, v)}
+                onPreview={() => handlePreviewInstrument(ci)}
+                onRegenerate={() => handleRegenSingleInstrument(ci)}
+                adsrProgress={adsrProgressValues[ci]}
+              />
+            );
+          })}
         </View>
       )}
 
       {/* Pattern Data Grid */}
       {currentPattern ? (
-        <ScrollView style={styles.gridContainer}>
+        <ScrollView
+          ref={gridScrollRef}
+          style={styles.gridContainer}
+          stickyHeaderIndices={[0]}
+          onLayout={(e) => { gridScrollHeight.current = e.nativeEvent.layout.height; }}
+          onContentSizeChange={(_w, h) => { gridContentHeight.current = h; }}
+        >
           {/* Channel Headers with Regen */}
-          <View style={styles.gridHeader}>
+          <View style={styles.gridHeader} onLayout={(e) => { gridHeaderHeight.current = e.nativeEvent.layout.height; }}>
             <View style={styles.rowNumCol}>
               <Text style={styles.headerText}>ROW</Text>
             </View>
@@ -575,7 +745,7 @@ export default function App() {
                       {name}
                     </Text>
                     <View style={styles.headerBtnGroup}>
-                      <Pressable
+                      <AnimatedPressable
                         onPress={() => toggleMute(ci)}
                         style={[
                           styles.toggleBtn,
@@ -586,8 +756,8 @@ export default function App() {
                           styles.toggleText,
                           isExplicitMuted && styles.toggleTextActive,
                         ]}>M</Text>
-                      </Pressable>
-                      <Pressable
+                      </AnimatedPressable>
+                      <AnimatedPressable
                         onPress={() => toggleSolo(ci)}
                         style={[
                           styles.toggleBtn,
@@ -598,17 +768,16 @@ export default function App() {
                           styles.toggleText,
                           isSoloed && styles.toggleTextSoloed,
                         ]}>S</Text>
-                      </Pressable>
-                      <Pressable
+                      </AnimatedPressable>
+                      <AnimatedPressable
                         onPress={() => handleRegenChannel(ci)}
-                        style={({ pressed }) => [
+                        style={[
                           styles.regenBtn,
-                          pressed && { opacity: 0.6 },
                           flashChannels.has(ci) && styles.regenFlash,
                         ]}
                       >
                         <Text style={styles.regenText}>R</Text>
-                      </Pressable>
+                      </AnimatedPressable>
                     </View>
                   </View>
                 </View>
@@ -623,6 +792,7 @@ export default function App() {
             return (
               <View
                 key={row}
+                onLayout={row === 0 ? (e) => { gridRowHeight.current = e.nativeEvent.layout.height; } : undefined}
                 style={[
                   styles.gridRow,
                   isBeat && styles.gridRowBeat,
@@ -676,6 +846,15 @@ export default function App() {
         </ScrollView>
       ) : null}
 
+      {/* Load Modal */}
+      <LoadModal
+        visible={showLoad}
+        onClose={() => setShowLoad(false)}
+        onProjectLoaded={() => {
+          if (audioGraphRef.current?.isPlaying) stopPlayback();
+        }}
+      />
+
       {/* Export Modal */}
       {song && (
         <ExportModal
@@ -692,14 +871,26 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.bgPrimary,
+    userSelect: 'none',
+  },
+  brandBar: {
+    paddingTop: 6,
+    paddingRight: spacing.xl,
+    paddingBottom: spacing.xs,
+    alignItems: 'flex-end',
   },
   header: {
-    paddingTop: 48,
+    paddingTop: spacing.xl,
     paddingHorizontal: spacing.xl,
     paddingBottom: spacing.lg,
     borderBottomWidth: 1,
     borderBottomColor: colors.borderSubtle,
-    gap: spacing.md,
+    gap: spacing.lg,
+  },
+  titleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.lg,
   },
   title: {
     fontFamily: fonts.mono,
@@ -707,6 +898,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.accentPrimary,
     letterSpacing: 2,
+    flex: 1,
   },
   controls: {
     flexDirection: 'row',
@@ -747,7 +939,8 @@ const styles = StyleSheet.create({
     textAlign: 'center' as const,
   },
   transportIconRegen: {
-    fontSize: 20,
+    fontSize: 22,
+    marginTop: -2,
   },
   transportIconActive: {
     color: colors.bgPrimary,
@@ -809,6 +1002,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.borderTrack,
     paddingVertical: spacing.sm,
+    backgroundColor: colors.bgPrimary,
+    zIndex: 1,
   },
   rowNumCol: {
     width: 36,
@@ -913,6 +1108,7 @@ const styles = StyleSheet.create({
   noteText: {
     fontFamily: fonts.mono,
     fontSize: fontSize.gridNote,
+    paddingHorizontal: 3,
   },
   noteTextCursor: {
     fontWeight: '700',

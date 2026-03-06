@@ -65,6 +65,7 @@ export interface StructureTemplate {
 }
 
 export interface SongConfig {
+  name: string;
   vibe: VibeName;
   key: NoteName;
   scale: ScaleName;

@@ -1,5 +1,6 @@
-import React, { useCallback, useRef } from 'react';
-import { Pressable, Text, StyleSheet, type ViewStyle, type TextStyle } from 'react-native';
+import React from 'react';
+import { Text, StyleSheet, type ViewStyle } from 'react-native';
+import { AnimatedPressable } from './AnimatedPressable';
 import { colors } from '../theme/colors';
 import { fonts, fontSize } from '../theme/typography';
 import { spacing } from '../theme/layout';
@@ -27,14 +28,14 @@ export function Button({ label, variant = 'action', active = false, disabled = f
   const v = variantStyles[variant];
 
   return (
-    <Pressable
+    <AnimatedPressable
       onPress={onPress}
       disabled={disabled}
-      style={({ pressed }) => [
+      style={[
         styles.base,
         {
           backgroundColor: active ? v.bgActive : v.bg,
-          opacity: pressed ? 0.7 : disabled ? 0.4 : 1,
+          opacity: disabled ? 0.4 : 1,
           borderColor: active ? v.bgActive : colors.borderSubtle,
         },
         variant === 'icon' && styles.iconSize,
@@ -51,7 +52,7 @@ export function Button({ label, variant = 'action', active = false, disabled = f
       >
         {label}
       </Text>
-    </Pressable>
+    </AnimatedPressable>
   );
 }
 

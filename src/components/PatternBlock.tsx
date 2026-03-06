@@ -1,5 +1,6 @@
 import React from 'react';
-import { Pressable, Text, StyleSheet } from 'react-native';
+import { Text, StyleSheet } from 'react-native';
+import { AnimatedPressable } from './AnimatedPressable';
 import { colors } from '../theme/colors';
 import { fonts, fontSize } from '../theme/typography';
 import { spacing } from '../theme/layout';
@@ -9,21 +10,43 @@ interface PatternBlockProps {
   active?: boolean;
   playing?: boolean;
   onPress?: () => void;
+  patternColor?: string;
+  labelColor?: string;
+  activeColor?: string;
+  activeLabelColor?: string;
+  activeBorderColor?: string;
 }
 
-export function PatternBlock({ label, active = false, playing = false, onPress }: PatternBlockProps) {
+export function PatternBlock({
+  label,
+  active = false,
+  playing = false,
+  onPress,
+  patternColor,
+  labelColor,
+  activeColor,
+  activeLabelColor,
+  activeBorderColor,
+}: PatternBlockProps) {
   return (
-    <Pressable
+    <AnimatedPressable
       onPress={onPress}
-      style={({ pressed }) => [
+      style={[
         styles.block,
-        active && styles.active,
+        patternColor ? { backgroundColor: patternColor } : undefined,
+        active && {
+          backgroundColor: activeColor ?? colors.bgCursor,
+          borderColor: activeBorderColor ?? colors.accentPrimary,
+        },
         playing && styles.playing,
-        pressed && styles.pressed,
       ]}
     >
-      <Text style={[styles.label, active && styles.labelActive]}>{label}</Text>
-    </Pressable>
+      <Text style={[
+        styles.label,
+        labelColor ? { color: labelColor } : undefined,
+        active && { color: activeLabelColor ?? colors.accentPrimary },
+      ]}>{label}</Text>
+    </AnimatedPressable>
   );
 }
 
@@ -37,21 +60,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  active: {
-    borderColor: colors.accentPrimary,
-    backgroundColor: colors.bgCursor,
-  },
   playing: {},
-  pressed: {
-    opacity: 0.7,
-  },
   label: {
     fontFamily: fonts.mono,
     fontSize: fontSize.trackHeader,
     color: colors.textSecondary,
     fontWeight: '700',
-  },
-  labelActive: {
-    color: colors.accentPrimary,
   },
 });

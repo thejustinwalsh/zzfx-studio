@@ -18,6 +18,7 @@ import { generateMelodyPattern } from './melody';
 import { generateHarmonyPattern } from './harmony';
 import { generateChordProgression } from './chords';
 import { generatePatternEffects, generateChannelEffects, applyEffect } from './effects';
+import { generateSongName } from './songNames';
 import { zzfxMChannels } from './zzfx';
 
 const PATTERN_LABELS: PatternLabel[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
@@ -114,6 +115,7 @@ export function generateSong(config?: Partial<SongConfig>): Song {
   const length: SongLength = config?.length ?? 'long';
 
   const fullConfig: SongConfig = {
+    name: config?.name ?? generateSongName(vibe),
     vibe,
     key: config?.key ?? 'C',
     scale: config?.scale ?? pick(vibeConfig.preferredScales),

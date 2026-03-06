@@ -1,5 +1,6 @@
 import { Song, SongConfig, Pattern, PatternLabel, PatternEffects, ChannelEffects, NoteEffect, SectionRole } from './types';
 import { songToZzfxm } from './song';
+import { generateSongName } from './songNames';
 
 // Strip trailing zeros from number arrays for compact output
 function fmtParams(arr: number[]): string {
@@ -98,14 +99,14 @@ export function songToCode(song: Song): string {
   lines.push('');
 
   // Human-readable, usable JS (expanded channels for correct playback)
-  lines.push('let instruments = [');
+  lines.push('const instruments = [');
   for (const inst of expanded.instruments) {
     lines.push('  ' + fmtParams(inst) + ',');
   }
   lines.push('];');
   lines.push('');
 
-  lines.push('let patterns = [');
+  lines.push('const patterns = [');
   for (let pi = 0; pi < expanded.patterns.length; pi++) {
     const label = song.patternOrder[pi];
     const role = song.patternRoles[label];
@@ -118,8 +119,8 @@ export function songToCode(song: Song): string {
   lines.push('];');
   lines.push('');
 
-  lines.push(`let sequence = [${expanded.sequence.join(',')}];`);
-  lines.push(`let BPM = ${expanded.bpm};`);
+  lines.push(`const sequence = [${expanded.sequence.join(',')}];`);
+  lines.push(`const BPM = ${expanded.bpm};`);
   lines.push('');
   lines.push('zzfxP(...zzfxM(instruments, patterns, sequence, BPM));');
 
@@ -148,7 +149,10 @@ export function codeToSong(code: string): Song | null {
     const data = JSON.parse(match[1]);
     if (!data.config || !data.instruments || !data.patterns || !data.sequence) return null;
 
-    const config: SongConfig = data.config;
+    const config: SongConfig = {
+      ...data.config,
+      name: data.config.name || generateSongName(data.config.vibe),
+    };
 
     // Pad instruments back to 20 params
     for (const inst of data.instruments) {

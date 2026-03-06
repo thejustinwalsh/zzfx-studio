@@ -10,6 +10,10 @@ interface SequenceMatrixProps {
   playbackPatternIdx: number;
   playbackRow: number | null;
   isPlaying: boolean;
+  patternColors?: Record<string, string>;
+  labelColors?: Record<string, string>;
+  activeBorderColors?: Record<string, string>;
+  activeLabelColors?: Record<string, string>;
 }
 
 export function SequenceMatrix({
@@ -18,9 +22,12 @@ export function SequenceMatrix({
   playbackPatternIdx,
   playbackRow,
   isPlaying,
+  patternColors,
+  labelColors,
+  activeBorderColors,
+  activeLabelColors,
 }: SequenceMatrixProps) {
   const gap = 1;
-  const totalGaps = (sequence.length - 1) * gap;
 
   return (
     <View style={styles.container}>
@@ -28,6 +35,8 @@ export function SequenceMatrix({
         const label = patternOrder[patIdx];
         const isCurrent = isPlaying && i === playbackPatternIdx;
         const progress = isCurrent && playbackRow !== null ? playbackRow / 31 : 0;
+        const borderColor = isCurrent ? (activeBorderColors?.[label] ?? colors.borderTrack) : colors.borderSubtle;
+        const textColor = isCurrent ? (activeLabelColors?.[label] ?? colors.accentPrimary) : (labelColors?.[label] ?? colors.textDim);
 
         return (
           <View
@@ -35,14 +44,12 @@ export function SequenceMatrix({
             style={[
               styles.block,
               { flex: 1, marginBottom: i < sequence.length - 1 ? gap : 0 },
-              isCurrent && styles.blockActive,
+              patternColors?.[label] ? { backgroundColor: patternColors[label] } : undefined,
+              isCurrent && { borderColor, backgroundColor: colors.bgCursor },
             ]}
           >
             <Text
-              style={[
-                styles.label,
-                isCurrent && styles.labelActive,
-              ]}
+              style={[styles.label, { color: textColor }]}
               numberOfLines={1}
             >
               {label}
@@ -51,7 +58,10 @@ export function SequenceMatrix({
               <View
                 style={[
                   styles.cursor,
-                  { top: `${progress * 100}%` as any },
+                  {
+                    top: `${progress * 100}%` as any,
+                    backgroundColor: borderColor,
+                  },
                 ]}
               />
             )}
@@ -75,25 +85,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     overflow: 'hidden',
   },
-  blockActive: {
-    borderColor: colors.borderTrack,
-    backgroundColor: colors.bgCursor,
-  },
   label: {
     fontFamily: fonts.mono,
     fontSize: 5,
-    color: colors.textDim,
     fontWeight: '700',
-  },
-  labelActive: {
-    color: colors.accentPrimary,
   },
   cursor: {
     position: 'absolute',
     left: 0,
     right: 0,
     height: 1,
-    backgroundColor: colors.accentPrimary,
     opacity: 0.45,
   },
 });

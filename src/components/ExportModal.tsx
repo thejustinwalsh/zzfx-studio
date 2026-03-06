@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { StyleSheet, Text, View, ScrollView, Pressable, Modal } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, Modal } from 'react-native';
+import { AnimatedPressable } from './AnimatedPressable';
 import { colors, fonts, fontSize, spacing } from '../theme';
 import { zzfxM, zzfxP, unlockAudio, zzfxR } from '../engine/zzfx';
 import { songToZzfxm } from '../engine/song';
@@ -184,7 +185,7 @@ export function ExportModal({ visible, song, onClose }: ExportModalProps) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `zzfx-${song.config.vibe}-${song.config.key}-${song.config.scale}.js`;
+    a.download = `${(song.config.name || 'zzfx-song').toLowerCase().replace(/\s+/g, '-')}.js`;
     a.click();
     URL.revokeObjectURL(url);
   }, [code, song]);
@@ -222,9 +223,9 @@ export function ExportModal({ visible, song, onClose }: ExportModalProps) {
                 {formatTime(duration)} / {song.patternOrder.length} patterns
               </Text>
             </View>
-            <Pressable onPress={onClose} style={styles.closeBtn}>
+            <AnimatedPressable onPress={onClose} style={styles.closeBtn}>
               <Text style={styles.closeBtnText}>X</Text>
-            </Pressable>
+            </AnimatedPressable>
           </View>
 
           {/* Waveform */}
@@ -259,23 +260,23 @@ export function ExportModal({ visible, song, onClose }: ExportModalProps) {
 
           {/* Transport */}
           <View style={styles.transport}>
-            <Pressable
+            <AnimatedPressable
               onPress={handlePlay}
               style={[styles.playBtn, isPlaying && styles.playBtnActive]}
             >
               <Text style={[styles.playBtnText, isPlaying && styles.playBtnTextActive]}>
                 {isPlaying ? 'STOP' : 'PLAY ZZFXM'}
               </Text>
-            </Pressable>
-            <Pressable onPress={handleCopy} style={styles.actionBtn}>
+            </AnimatedPressable>
+            <AnimatedPressable onPress={handleCopy} style={styles.actionBtn}>
               <Text style={styles.actionBtnText}>COPY ONELINER</Text>
-            </Pressable>
-            <Pressable onPress={handleCopyFull} style={styles.actionBtn}>
+            </AnimatedPressable>
+            <AnimatedPressable onPress={handleCopyFull} style={styles.actionBtn}>
               <Text style={styles.actionBtnText}>COPY CODE</Text>
-            </Pressable>
-            <Pressable onPress={handleDownload} style={styles.actionBtn}>
+            </AnimatedPressable>
+            <AnimatedPressable onPress={handleDownload} style={styles.actionBtn}>
               <Text style={styles.actionBtnText}>DOWNLOAD .JS</Text>
-            </Pressable>
+            </AnimatedPressable>
           </View>
 
           {/* Code */}
@@ -398,6 +399,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   playBtn: {
+    minWidth: 120,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
     borderWidth: 1,
@@ -433,6 +435,7 @@ const styles = StyleSheet.create({
   codeScroll: {
     flex: 1,
     backgroundColor: colors.bgSurface,
+    userSelect: 'text',
   },
   codeContent: {
     padding: spacing.xl,

@@ -1,3 +1,4 @@
+export { AnimatedPressable } from './AnimatedPressable';
 export { Button } from './Button';
 export type { ButtonVariant } from './Button';
 export { Dropdown } from './Dropdown';
@@ -11,3 +12,6 @@ export type { ChannelNote, RGB } from './Oscilloscope';
 export { InstrumentCard } from './InstrumentCard';
 export { SequenceMatrix } from './SequenceMatrix';
 export { ExportModal } from './ExportModal';
+export { LoadModal } from './LoadModal';
+export { BrandTitle } from './BrandTitle';
+export { RetroAvatar } from './RetroAvatar';
