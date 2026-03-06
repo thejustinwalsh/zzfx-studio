@@ -7,6 +7,7 @@ export { drumNoteToName, DRUM_NOTES } from './types';
 export { euclidean } from './euclidean';
 export { VIBE_CONFIG, getRandomBpm } from './vibes';
 export { generateChordProgression } from './chords';
+export { songToCode, songToClipboard, codeToSong } from './serialize';
 export type {
   Song,
   SongConfig,

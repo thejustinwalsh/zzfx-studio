@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useRef, useCallback, useEffect, useMemo } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, Text, View, ScrollView, Pressable } from 'react-native';
 import { colors, fonts, fontSize, spacing } from './src/theme';
@@ -28,9 +28,14 @@ import {
   CHROMATIC,
   SCALES,
   VIBE_CONFIG,
+  songToCode,
+  songToClipboard,
+  codeToSong,
 } from './src/engine';
 import type { Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel } from './src/engine';
 import type { ChannelIndex } from './src/theme/colors';
+import { useSongStore, initializeStore } from './src/store';
+import { useState } from 'react';
 
 function pick<T>(arr: readonly T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
@@ -43,34 +48,35 @@ const LENGTH_OPTIONS: SongLength[] = ['short', 'long', 'epic'];
 const CHANNEL_NAMES = ['LEAD', 'HARM', 'BASS', 'DRUM'];
 const CHANNEL_COLORS = [colors.ch0Primary, colors.ch1Primary, colors.ch2Primary, colors.ch3Primary];
 
-// Pick a random initial config
-const INITIAL_VIBE = VIBE_OPTIONS[Math.floor(Math.random() * VIBE_OPTIONS.length)];
-const INITIAL_KEY = KEY_OPTIONS[Math.floor(Math.random() * KEY_OPTIONS.length)];
-const INITIAL_VIBE_CONFIG = VIBE_CONFIG[INITIAL_VIBE];
-const INITIAL_SCALE = INITIAL_VIBE_CONFIG.preferredScales[
-  Math.floor(Math.random() * INITIAL_VIBE_CONFIG.preferredScales.length)
-];
-
-const INITIAL_LENGTH: SongLength = 'long';
-const INITIAL_SONG = generateSong({ vibe: INITIAL_VIBE, key: INITIAL_KEY, scale: INITIAL_SCALE, length: INITIAL_LENGTH });
+// Initialize store on app load (generates random song if none persisted)
+initializeStore();
 
 export default function App() {
-  const [song, setSong] = useState<Song | null>(INITIAL_SONG);
+  // Persisted state from store
+  const song = useSongStore(s => s.song);
+  const vibe = useSongStore(s => s.vibe);
+  const key = useSongStore(s => s.key);
+  const scale = useSongStore(s => s.scale);
+  const bpm = useSongStore(s => s.bpm);
+  const songLength = useSongStore(s => s.songLength);
+  const channelVolumes = useSongStore(s => s.channelVolumes);
+  const activePattern = useSongStore(s => s.activePattern);
+  const mutedChannels = useSongStore(s => s.mutedChannels);
+  const soloChannel = useSongStore(s => s.soloChannel);
+
+  const {
+    setSong, setVibe, setKey, setScale, setBpm, setSongLength,
+    setActivePattern, toggleMute, toggleSolo, updateVolume,
+    generate, loadSong,
+  } = useSongStore.getState();
+
+  // Ephemeral state (not persisted)
   const [isPlaying, setIsPlaying] = useState(false);
-  const [activePattern, setActivePattern] = useState<PatternLabel>(INITIAL_SONG.patternOrder[0]);
-  const [vibe, setVibe] = useState<VibeName>(INITIAL_VIBE);
-  const [key, setKey] = useState<NoteName>(INITIAL_KEY);
-  const [scale, setScale] = useState<ScaleName>(INITIAL_SCALE);
-  const [bpm, setBpm] = useState(INITIAL_SONG.config.bpm);
-  const [songLength, setSongLength] = useState<SongLength>(INITIAL_LENGTH);
   const [playbackRow, setPlaybackRow] = useState<number | null>(null);
   const [playbackPatternIdx, setPlaybackPatternIdx] = useState(0);
   const [flashChannels, setFlashChannels] = useState<Set<number>>(new Set());
-  const [mutedChannels, setMutedChannels] = useState<Set<number>>(new Set());
-  const [soloChannel, setSoloChannel] = useState<number | null>(null);
-  const [channelVolumes, setChannelVolumes] = useState<number[]>(
-    () => INITIAL_SONG.instruments.map(p => p[0] ?? 1)
-  );
+
+  // Refs
   const audioGraphRef = useRef<AudioGraph | null>(null);
   const channelBuffersRef = useRef<[number[], number[]][]>([]);
   const rafRef = useRef<number>(0);
@@ -90,7 +96,7 @@ export default function App() {
     if (soloChannel !== null) {
       return ch === soloChannel ? 1 : 0;
     }
-    return mutedChannels.has(ch) ? 0 : 1;
+    return mutedChannels.includes(ch) ? 0 : 1;
   }, [soloChannel, mutedChannels]);
 
   // Compute which channels are effectively muted (for UI display)
@@ -111,61 +117,30 @@ export default function App() {
     }
   }, [getEffectiveGain]);
 
-  const toggleMute = useCallback((ch: number) => {
-    if (soloChannel === ch) setSoloChannel(null);
-    setMutedChannels(prev => {
-      const next = new Set(prev);
-      if (next.has(ch)) next.delete(ch);
-      else next.add(ch);
-      return next;
-    });
-  }, [soloChannel]);
-
-  const toggleSolo = useCallback((ch: number) => {
-    setSoloChannel(prev => prev === ch ? null : ch);
-  }, []);
-
   // Playback position tracking via RAF using AudioGraph's audio clock
   const updatePlaybackPosition = useCallback(() => {
-    if (!song || !audioGraphRef.current) return;
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong || !audioGraphRef.current) return;
     const ag = audioGraphRef.current;
     const elapsed = ag.getPosition();
-    const rowDuration = 60 / song.config.bpm / 4;
+    const rowDuration = 60 / currentSong.config.bpm / 4;
     const patternDuration = 32 * rowDuration;
 
-    const patIdx = Math.floor(elapsed / patternDuration) % song.sequence.length;
+    const patIdx = Math.floor(elapsed / patternDuration) % currentSong.sequence.length;
     const row = Math.floor((elapsed % patternDuration) / rowDuration);
     setPlaybackRow(row);
     setPlaybackPatternIdx(patIdx);
-    const label = song.patternOrder[song.sequence[patIdx]];
+    const label = currentSong.patternOrder[currentSong.sequence[patIdx]];
     if (label) setActivePattern(label);
 
     rafRef.current = requestAnimationFrame(updatePlaybackPosition);
-  }, [song]);
+  }, []);
 
   // Generation flash effect
   const flashChannel = useCallback((channels: number[]) => {
     setFlashChannels(new Set(channels));
     setTimeout(() => setFlashChannels(new Set()), 150);
   }, []);
-
-  // Core generate function — used by auto-regen and manual re-roll
-  const doGenerate = useCallback((v: VibeName, k: NoteName, s: ScaleName, b: number, l: SongLength) => {
-    const newSong = generateSong({ vibe: v, key: k, scale: s, bpm: b, length: l });
-    setSong(newSong);
-    setActivePattern(newSong.patternOrder[0]);
-    setBpm(newSong.config.bpm);
-    const vols = newSong.instruments.map(p => p[0] ?? 1);
-    setChannelVolumes(vols);
-    flashChannel([0, 1, 2, 3]);
-    // Stop playback
-    if (audioGraphRef.current?.isPlaying) {
-      audioGraphRef.current.stop();
-      setIsPlaying(false);
-      setPlaybackRow(null);
-      cancelAnimationFrame(rafRef.current);
-    }
-  }, [flashChannel]);
 
   // Auto-regen when vibe/key/scale/length changes
   const isInitialMount = useRef(true);
@@ -174,7 +149,15 @@ export default function App() {
       isInitialMount.current = false;
       return;
     }
-    doGenerate(vibe, key, scale, bpm, songLength);
+    generate(vibe, key, scale, bpm, songLength);
+    flashChannel([0, 1, 2, 3]);
+    // Stop playback
+    if (audioGraphRef.current?.isPlaying) {
+      audioGraphRef.current.stop();
+      setIsPlaying(false);
+      setPlaybackRow(null);
+      cancelAnimationFrame(rafRef.current);
+    }
   }, [vibe, key, scale, songLength]);
 
   // Live BPM change — debounced re-render + hot-swap while playing
@@ -189,8 +172,9 @@ export default function App() {
 
     if (bpmTimerRef.current) clearTimeout(bpmTimerRef.current);
     bpmTimerRef.current = setTimeout(() => {
-      if (!song) return;
-      const newSong = { ...song, config: { ...song.config, bpm } };
+      const currentSong = useSongStore.getState().song;
+      if (!currentSong) return;
+      const newSong = { ...currentSong, config: { ...currentSong.config, bpm } };
       setSong(newSong);
 
       const { instruments, patterns, sequence } = songToZzfxm(newSong);
@@ -215,15 +199,20 @@ export default function App() {
     const newKey = pick(KEY_OPTIONS);
     const newScale = pick(vibeConf.preferredScales);
     const newBpm = vibeConf.bpmRange[0] + Math.floor(Math.random() * (vibeConf.bpmRange[1] - vibeConf.bpmRange[0] + 1));
-    setVibe(newVibe);
-    setKey(newKey);
-    setScale(newScale as ScaleName);
-    setBpm(newBpm);
-    doGenerate(newVibe, newKey, newScale, newBpm, songLength);
-  }, [songLength, doGenerate]);
+    generate(newVibe, newKey, newScale, newBpm, useSongStore.getState().songLength);
+    flashChannel([0, 1, 2, 3]);
+    // Stop playback
+    if (audioGraphRef.current?.isPlaying) {
+      audioGraphRef.current.stop();
+      setIsPlaying(false);
+      setPlaybackRow(null);
+      cancelAnimationFrame(rafRef.current);
+    }
+  }, [flashChannel]);
 
   const handlePlay = useCallback(() => {
-    if (!song) return;
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
     unlockAudio();
 
     const ag = getAudioGraph();
@@ -233,7 +222,7 @@ export default function App() {
       cancelAnimationFrame(rafRef.current);
     }
 
-    const { instruments, patterns, sequence, bpm: songBpm } = songToZzfxm(song);
+    const { instruments, patterns, sequence, bpm: songBpm } = songToZzfxm(currentSong);
     const buffers = zzfxMChannels(instruments, patterns, sequence, songBpm);
     if (buffers.length === 0 || buffers[0][0].length === 0) return;
 
@@ -248,7 +237,7 @@ export default function App() {
 
     setIsPlaying(true);
     rafRef.current = requestAnimationFrame(updatePlaybackPosition);
-  }, [song, updatePlaybackPosition, getEffectiveGain, getAudioGraph]);
+  }, [updatePlaybackPosition, getEffectiveGain, getAudioGraph]);
 
   const handleStop = useCallback(() => {
     audioGraphRef.current?.stop();
@@ -258,22 +247,23 @@ export default function App() {
   }, []);
 
   const handleRegenPattern = useCallback((label: PatternLabel) => {
-    if (!song) return;
-    const newPattern = regeneratePattern(song, label);
-    const newSong = {
-      ...song,
-      patterns: { ...song.patterns, [label]: newPattern },
-    };
-    setSong(newSong);
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
+    const newPattern = regeneratePattern(currentSong, label);
+    setSong({
+      ...currentSong,
+      patterns: { ...currentSong.patterns, [label]: newPattern },
+    });
     flashChannel([0, 1, 2, 3]);
-  }, [song, flashChannel]);
+  }, [flashChannel]);
 
   const handleRegenChannel = useCallback((channelIndex: number) => {
-    if (!song) return;
-    const newPattern = regenerateChannel(song, activePattern, channelIndex);
+    const { song: currentSong, activePattern: ap } = useSongStore.getState();
+    if (!currentSong) return;
+    const newPattern = regenerateChannel(currentSong, ap, channelIndex);
     const newSong = {
-      ...song,
-      patterns: { ...song.patterns, [activePattern]: newPattern },
+      ...currentSong,
+      patterns: { ...currentSong.patterns, [ap]: newPattern },
     };
     setSong(newSong);
     flashChannel([channelIndex]);
@@ -285,36 +275,18 @@ export default function App() {
       channelBuffersRef.current[channelIndex] = newBuffers[channelIndex];
       audioGraphRef.current.replaceChannel(channelIndex, newBuffers[channelIndex]);
     }
-  }, [song, activePattern, flashChannel]);
-
-  const handleRegenInstruments = useCallback(() => {
-    if (!song) return;
-    const newInstruments = generateInstruments(song.config.vibe);
-    const newSong = { ...song, instruments: newInstruments };
-    setSong(newSong);
-    const vols = newInstruments.map(p => p[0] ?? 1);
-    setChannelVolumes(vols);
-    flashChannel([0, 1, 2, 3]);
-
-    // Hot-swap all channels while playing
-    if (audioGraphRef.current?.isPlaying) {
-      const { instruments, patterns, sequence, bpm: songBpm } = songToZzfxm(newSong);
-      const newBuffers = zzfxMChannels(instruments, patterns, sequence, songBpm);
-      channelBuffersRef.current = newBuffers;
-      const songDuration = newBuffers[0][0].length / 44100;
-      audioGraphRef.current.replaceAllChannels(newBuffers, songDuration, songBpm);
-    }
-  }, [song, flashChannel]);
+  }, [flashChannel]);
 
   const handleRegenSingleInstrument = useCallback((channelIndex: number) => {
-    if (!song) return;
-    const newInstruments = [...song.instruments];
-    const newAll = generateInstruments(song.config.vibe);
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
+    const newInstruments = [...currentSong.instruments];
+    const newAll = generateInstruments(currentSong.config.vibe);
     newInstruments[channelIndex] = newAll[channelIndex];
-    const newSong = { ...song, instruments: newInstruments };
+    const newSong = { ...currentSong, instruments: newInstruments };
     setSong(newSong);
     const newVol = newInstruments[channelIndex][0] ?? 1;
-    setChannelVolumes(prev => {
+    useSongStore.getState().setChannelVolumes(prev => {
       const next = [...prev];
       next[channelIndex] = newVol;
       return next;
@@ -327,50 +299,88 @@ export default function App() {
       channelBuffersRef.current[channelIndex] = newBuffers[channelIndex];
       audioGraphRef.current.replaceChannel(channelIndex, newBuffers[channelIndex]);
     }
-  }, [song, flashChannel]);
+  }, []);
 
   const handleVolumeChange = useCallback((channelIndex: number, newVol: number) => {
-    if (!song) return;
-
-    // Update volume state immediately
-    setChannelVolumes(prev => {
-      const next = [...prev];
-      next[channelIndex] = newVol;
-      return next;
-    });
-
-    // Update instrument param
-    const newInstruments = [...song.instruments];
-    newInstruments[channelIndex] = [...newInstruments[channelIndex]];
-    newInstruments[channelIndex][0] = newVol;
-    const newSong = { ...song, instruments: newInstruments };
-    setSong(newSong);
+    updateVolume(channelIndex, newVol);
 
     // Debounced re-render + hot-swap while playing
     if (audioGraphRef.current?.isPlaying) {
       if (volTimerRef.current) clearTimeout(volTimerRef.current);
       volTimerRef.current = setTimeout(() => {
-        const { instruments, patterns, sequence, bpm: songBpm } = songToZzfxm(newSong);
+        const currentSong = useSongStore.getState().song;
+        if (!currentSong) return;
+        const { instruments, patterns, sequence, bpm: songBpm } = songToZzfxm(currentSong);
         const newBuffers = zzfxMChannels(instruments, patterns, sequence, songBpm, channelIndex);
         channelBuffersRef.current[channelIndex] = newBuffers[channelIndex];
         audioGraphRef.current?.replaceChannel(channelIndex, newBuffers[channelIndex]);
       }, 100);
     }
-  }, [song]);
+  }, []);
 
   const handlePreviewInstrument = useCallback((channelIndex: number) => {
-    if (!song) return;
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
     unlockAudio();
-    const params = [...song.instruments[channelIndex]];
-    // Play a C4 (note 12) for tonal, or the drum note for drums
+    const params = [...currentSong.instruments[channelIndex]];
     if (channelIndex === 3) {
-      params[2] *= 2 ** ((12 - 12) / 12); // base pitch
+      params[2] *= 2 ** ((12 - 12) / 12);
     }
     const samples = zzfxG(...params);
     if (samples.length > 0) {
       zzfxP([samples]);
     }
-  }, [song]);
+  }, []);
+
+  // Export / Import / Copy
+  const handleExport = useCallback(() => {
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
+    const code = songToCode(currentSong);
+    const blob = new Blob([code], { type: 'text/javascript' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `zzfx-${currentSong.config.vibe}-${currentSong.config.key}-${currentSong.config.scale}.js`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const handleCopy = useCallback(async () => {
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
+    const code = songToClipboard(currentSong);
+    try {
+      await navigator.clipboard.writeText(code);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = code;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+  }, []);
+
+  const handleImport = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.js,.txt';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      const imported = codeToSong(text);
+      if (!imported) return;
+      loadSong(imported);
+      if (audioGraphRef.current?.isPlaying) {
+        audioGraphRef.current.stop();
+        setIsPlaying(false);
+        setPlaybackRow(null);
+      }
+    };
+    input.click();
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -384,24 +394,18 @@ export default function App() {
   const currentPattern = song && song.patterns[activePattern];
 
   // Precompute per-row bar colors for the playing pattern's oscilloscope
-  // Uses ADSR envelope from instrument params to decay colors after note-on
-  // All 32 rows computed upfront — runtime is just an array index lookup
   const BAR_COUNT = 64;
   const oscColorTable = useMemo(() => {
     if (!song || !currentPattern) return null;
 
-    const rowDuration = 60 / song.config.bpm / 4; // seconds per row (sixteenth note)
+    const rowDuration = 60 / song.config.bpm / 4;
     const analyser = audioGraphRef.current?.getAnalyser();
     const sampleRate = analyser?.context?.sampleRate;
     const fftSize = analyser?.fftSize;
 
-    // Compensate for audio pipeline latency — colors should represent
-    // what the user HEARS, not what was scheduled. Subtract latency
-    // so the visual trails behind the playback cursor appropriately.
     const ctx = analyser?.context as AudioContext | undefined;
     const audioLatency = (ctx?.baseLatency ?? 0) + (ctx?.outputLatency ?? 0);
 
-    // Per-channel envelope info (in seconds)
     const envelopes = song.instruments.map(params => ({
       attack: params[3] ?? 0,
       sustain: params[4] ?? 0,
@@ -409,13 +413,10 @@ export default function App() {
       decay: params[18] ?? 0,
     }));
 
-    // For each channel, find the last note-on at or before each row
-    // and compute the envelope weight at that row's time offset
     const channelNoteMap: (ChannelNote | null)[][] = Array.from({ length: 32 }, () => []);
 
     for (let row = 0; row < 32; row++) {
       for (let ch = 0; ch < 4; ch++) {
-        // Scan backwards from this row to find the most recent note-on
         let foundNote = 0;
         let noteRow = -1;
         for (let r = row; r >= 0; r--) {
@@ -432,15 +433,11 @@ export default function App() {
           continue;
         }
 
-        // Add audio latency so the visual lags behind the cursor
-        // matching when the user actually perceives the sound
         const elapsed = (row - noteRow) * rowDuration + audioLatency;
         const env = envelopes[ch];
         const adsrDuration = env.attack + env.decay + env.sustain + env.release;
 
-        // Visual tail: extend past ADSR with a perceptual fade
-        // Minimum visual presence of 0.4s so short notes don't just blink
-        const visualTail = 0.3; // seconds of extra fade after ADSR ends
+        const visualTail = 0.3;
         const minVisualDuration = 0.4;
         const totalVisualDuration = Math.max(adsrDuration + visualTail, minVisualDuration);
 
@@ -449,23 +446,20 @@ export default function App() {
           continue;
         }
 
-        // Compute envelope amplitude at this time offset
         let amp = 1.0;
         if (elapsed < env.attack) {
-          amp = elapsed / Math.max(env.attack, 0.001); // ramp up
+          amp = elapsed / Math.max(env.attack, 0.001);
         } else if (elapsed < env.attack + env.decay) {
-          amp = 1.0; // peak
+          amp = 1.0;
         } else if (elapsed < env.attack + env.decay + env.sustain) {
-          amp = 0.8; // sustain level
+          amp = 0.8;
         } else if (elapsed < adsrDuration) {
-          // Release phase
           const releaseElapsed = elapsed - (env.attack + env.decay + env.sustain);
           amp = Math.max(0, 0.8 * (1 - releaseElapsed / Math.max(env.release, 0.001)));
         } else {
-          // Visual tail — perceptual fade from where ADSR ended to 0
           const tailElapsed = elapsed - adsrDuration;
           const tailProgress = tailElapsed / visualTail;
-          amp = 0.3 * (1 - tailProgress * tailProgress); // quadratic ease-out
+          amp = 0.3 * (1 - tailProgress * tailProgress);
         }
 
         const baseFreq = song.instruments[ch][2] ?? 261.63;
@@ -487,18 +481,21 @@ export default function App() {
 
       {/* Header / Controls */}
       <View style={styles.header}>
-        <Text style={styles.title}>ZZFX GEN STUDIO</Text>
+        <Text style={styles.title}>ZZFX STUDIO</Text>
         <View style={styles.controls}>
-          <View style={styles.transport}>
-            <Pressable onPress={handleReroll} style={({ pressed }) => [styles.transportBtn, styles.transportBtnRegen, pressed && { opacity: 0.6 }]}>
-              <Text style={[styles.transportIcon, { color: colors.accentGenerate }]}>⟳</Text>
-            </Pressable>
-            <Pressable onPress={handlePlay} disabled={!song} style={({ pressed }) => [styles.transportBtn, isPlaying && styles.transportBtnActive, pressed && { opacity: 0.6 }, !song && { opacity: 0.4 }]}>
-              <Text style={[styles.transportIcon, isPlaying && styles.transportIconActive]}>▶</Text>
-            </Pressable>
-            <Pressable onPress={handleStop} disabled={!isPlaying} style={({ pressed }) => [styles.transportBtn, pressed && { opacity: 0.6 }, !isPlaying && { opacity: 0.4 }]}>
-              <Text style={[styles.transportIcon, { color: colors.accentStop }]}>■</Text>
-            </Pressable>
+          <View style={styles.transportWrapper}>
+            <View style={styles.transportSpacer} />
+            <View style={styles.transport}>
+              <Pressable onPress={handleReroll} style={({ pressed }) => [styles.transportBtn, styles.transportBtnRegen, pressed && { opacity: 0.6 }]}>
+                <Text style={[styles.transportIcon, styles.transportIconRegen, { color: colors.accentGenerate }]}>⟳</Text>
+              </Pressable>
+              <Pressable onPress={handlePlay} disabled={!song} style={({ pressed }) => [styles.transportBtn, isPlaying && styles.transportBtnActive, pressed && { opacity: 0.6 }, !song && { opacity: 0.4 }]}>
+                <Text style={[styles.transportIcon, isPlaying && styles.transportIconActive]}>▶</Text>
+              </Pressable>
+              <Pressable onPress={handleStop} disabled={!isPlaying} style={({ pressed }) => [styles.transportBtn, pressed && { opacity: 0.6 }, !isPlaying && { opacity: 0.4 }]}>
+                <Text style={[styles.transportIcon, { color: colors.accentStop }]}>■</Text>
+              </Pressable>
+            </View>
           </View>
           <Dropdown label="VIBE" value={vibe} options={VIBE_OPTIONS} onSelect={(v) => setVibe(v as VibeName)} />
           <Dropdown label="KEY" value={key} options={KEY_OPTIONS} onSelect={(v) => setKey(v as NoteName)} />
@@ -513,12 +510,26 @@ export default function App() {
         <View style={styles.sequenceStrip}>
           <View style={styles.sequenceHeader}>
             <Text style={styles.sectionLabel}>SEQUENCE</Text>
-            <Pressable
-              onPress={handleRegenInstruments}
-              style={({ pressed }) => [styles.regenAllBtn, pressed && { opacity: 0.6 }]}
-            >
-              <Text style={styles.regenAllText}>REGEN INSTRUMENTS</Text>
-            </Pressable>
+            <View style={styles.sequenceActions}>
+              <Pressable
+                onPress={handleCopy}
+                style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.6 }]}
+              >
+                <Text style={styles.actionBtnText}>COPY</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleExport}
+                style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.6 }]}
+              >
+                <Text style={styles.actionBtnText}>EXPORT</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleImport}
+                style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.6 }]}
+              >
+                <Text style={styles.actionBtnText}>IMPORT</Text>
+              </Pressable>
+            </View>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View style={styles.sequenceRow}>
@@ -590,7 +601,7 @@ export default function App() {
             {CHANNEL_NAMES.map((name, ci) => {
               const isMuted = effectiveMutes.has(ci);
               const isSoloed = soloChannel === ci;
-              const isExplicitMuted = mutedChannels.has(ci);
+              const isExplicitMuted = mutedChannels.includes(ci);
               return (
                 <View key={name} style={styles.channelCol}>
                   <View style={styles.channelHeaderRow}>
@@ -666,7 +677,7 @@ export default function App() {
                   </Text>
                 </View>
                 {currentPattern.map((channel, ci) => {
-                  const noteVal = channel[row + 2]; // skip instrument + pan
+                  const noteVal = channel[row + 2];
                   const noteName = ci === 3
                     ? drumNoteToName(noteVal)
                     : zzfxmToNoteName(noteVal);
@@ -730,14 +741,20 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     alignItems: 'flex-end',
   },
+  transportWrapper: {
+    gap: spacing.xs,
+  },
+  transportSpacer: {
+    height: fontSize.trackSub,  // match dropdown label height
+  },
   transport: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'stretch',
     gap: spacing.sm,
   },
   transportBtn: {
     width: 36,
-    height: 36,
+    height: fontSize.buttonLabel + spacing.md * 2 + 2, // text + padding + border, matches dropdown trigger
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
     borderWidth: 1,
@@ -752,8 +769,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accentPlay,
   },
   transportIcon: {
-    fontSize: 20,
+    fontSize: 14,
     color: colors.textPrimary,
+    textAlign: 'center' as const,
+  },
+  transportIconRegen: {
+    fontSize: 20,
   },
   transportIconActive: {
     color: colors.bgPrimary,
@@ -776,16 +797,21 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     letterSpacing: 1,
   },
-  regenAllBtn: {
-    paddingHorizontal: spacing.md,
+  sequenceActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    alignItems: 'center',
+  },
+  actionBtn: {
+    paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderWidth: 1,
-    borderColor: colors.accentGenerate,
+    borderColor: colors.borderSubtle,
   },
-  regenAllText: {
+  actionBtnText: {
     fontFamily: fonts.mono,
     fontSize: 9,
-    color: colors.accentGenerate,
+    color: colors.textSecondary,
     fontWeight: '600',
     letterSpacing: 0.5,
   },

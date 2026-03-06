@@ -23,7 +23,9 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(npx zzfx:*)",
       "WebFetch(domain:www.synthycraft.com)",
-      "Bash(pnpm exec:*)"
+      "Bash(pnpm exec:*)",
+      "Bash(pnpm start:*)",
+      "Bash(pnpm expo:*)"
     ]
   }
 }
