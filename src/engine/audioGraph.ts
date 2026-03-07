@@ -1,5 +1,8 @@
 import { zzfxR } from './zzfx';
 
+type SampleArray = number[] | Float32Array;
+type StereoPair = [SampleArray, SampleArray];
+
 export class AudioGraph {
   private ctx: AudioContext;
   private masterGain: GainNode;
@@ -52,7 +55,7 @@ export class AudioGraph {
     return elapsed % this.songDuration;
   }
 
-  play(channelBuffers: [number[], number[]][], songDurationSec: number, bpm: number): void {
+  play(channelBuffers: StereoPair[], songDurationSec: number, bpm: number): void {
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
@@ -83,7 +86,7 @@ export class AudioGraph {
   }
 
   replaceAllChannels(
-    channelBuffers: [number[], number[]][],
+    channelBuffers: StereoPair[],
     songDurationSec: number,
     bpm: number
   ): void {
@@ -122,7 +125,7 @@ export class AudioGraph {
     this.playStartTime = swapTime - newOffset;
   }
 
-  replaceChannel(ch: number, stereoBuffer: [number[], number[]]): void {
+  replaceChannel(ch: number, stereoBuffer: StereoPair): void {
     if (!this._isPlaying || ch < 0 || ch >= 4) return;
 
     const now = this.ctx.currentTime;
@@ -146,7 +149,7 @@ export class AudioGraph {
 
   private createAndStartSource(
     ch: number,
-    stereoBuffer: [number[], number[]],
+    stereoBuffer: StereoPair,
     offset: number,
     when?: number
   ): void {

@@ -1,11 +1,23 @@
 import { registerRootComponent } from 'expo';
-import React from 'react';
-import { Platform, View, StyleSheet } from 'react-native';
+import { Platform } from 'react-native';
+import { registerServiceWorker } from './src/sw-register';
 
-// Style scrollbars — thin dark track, no ugly hover expansion
+registerServiceWorker();
+
+// Load JetBrains Mono as a web font + style scrollbars
 if (Platform.OS === 'web' && typeof document !== 'undefined') {
+  const fontWoff2 = require('./assets/JetBrainsMono-Regular.woff2');
+  const fontTtf = require('./assets/JetBrainsMono-Regular.ttf');
   const style = document.createElement('style');
   style.textContent = `
+    @font-face {
+      font-family: 'JetBrains Mono';
+      src: url('${fontWoff2}') format('woff2'),
+           url('${fontTtf}') format('truetype');
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }
     * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.04) transparent; }
     *::-webkit-scrollbar { width: 4px; height: 4px; }
     *::-webkit-scrollbar-track { background: transparent; }
@@ -14,24 +26,6 @@ if (Platform.OS === 'web' && typeof document !== 'undefined') {
   `;
   document.head.appendChild(style);
 }
-import { WithSkiaWeb } from '@shopify/react-native-skia/lib/module/web';
 
-const styles = StyleSheet.create({
-  fallback: {
-    flex: 1,
-    backgroundColor: '#0C0C0E', // colors.bgPrimary
-  },
-});
-
-function SkiaFallback() {
-  return React.createElement(View, { style: styles.fallback });
-}
-
-function AppWithSkia() {
-  return React.createElement(WithSkiaWeb, {
-    getComponent: () => import('./App'),
-    fallback: React.createElement(SkiaFallback),
-  });
-}
-
-registerRootComponent(AppWithSkia);
+import App from './App';
+registerRootComponent(App);

@@ -23,7 +23,7 @@ Build a browser-based chiptune music composition tool that looks and feels like 
 
 ## Visual Design — Tracker Aesthetic
 
-The UI should evoke a **classic hardware tracker / GameBoy chiptune tool**. Think:
+The UI should evoke a **classic hardware tracker / retro chiptune tool**. Think:
 
 - Dark background (`#0a0a0a` or deep navy), phosphor green or amber monospace text
 - Grid-based pattern display — rows x channels, like a real tracker
@@ -39,7 +39,7 @@ The UI should evoke a **classic hardware tracker / GameBoy chiptune tool**. Thin
 
 ## Song Architecture
 
-### Fixed 4-Channel Layout (GameBoy-style)
+### Fixed 4-Channel Layout (retro-style)
 ```
 Channel 0 — PULSE 1   (lead melody, shape=4)
 Channel 1 — PULSE 2   (harmony / written-out arpeggios, shape=4)
@@ -507,15 +507,40 @@ Note: no `isGenerating` state needed — all generation is synchronous and insta
 
 ---
 
-## Stretch Goals (implement if space allows)
+## Stretch Goals
 
-- **Export** — copy ZzFXM song array to clipboard as JS code
-- **Swing/groove** — offset every other row's timing slightly for lo-fi feel
-- **Pattern mutation** — "mutate" button that makes a small variation of a pattern (shift a few notes by 1-2 scale degrees, add/remove a couple hits) rather than full regen
-- **Visual waveform** — show a tiny oscilloscope view per channel during playback using Web Audio analyser
-- **WAV export** — render full song to WAV using manual RIFF header construction (SynthyCraft technique)
-- **Density/complexity sliders** — per-channel control over Euclidean hit count and probability thresholds
+| Goal | Status |
+|------|--------|
+| Export (clipboard + .js download) | DONE |
+| WAV export | DONE |
+| Visual oscilloscope | DONE (with per-row note-based coloring) |
+| Swing/groove | Not implemented |
+| Pattern mutation (small variations) | Not implemented |
+| Density/complexity sliders | Not implemented |
 
 ---
 
-*Target: a single self-contained `.jsx` artifact. The user should be able to generate a complete 4-channel GameBoy-style song in 1 click and play it back immediately — zero network calls, zero latency, pure algorithmic generation.*
+## Implementation Status (v0.1.0)
+
+### Beyond Original Plan
+- **Note effects system** — 8 retro-authentic per-note effects (SU/SD/VB/DT/ST/PD/BC/TR)
+- **Song length** — short/long/epic with structure templates per vibe
+- **Section roles** — verse/contrast/bridge/breakdown/climax drive generation variance
+- **Chord progressions** — harmonic structure via chord progression generation
+- **Multi-project support** — save, load, delete multiple songs (persisted to localStorage)
+- **Procedural song names** — generated per vibe
+- **SequenceMatrix** — visual playback position minimap
+- **Oscilloscope** — real-time frequency visualization colored by active note frequencies
+- **ADSR visualization** — animated envelope progress on instrument cards during playback
+- **Import from file** — load previously exported .js files
+- **Live BPM change** — hot-swap audio during playback
+- **AudioGraph** — Web Audio API with per-channel gain nodes and hot-swap capability
+- **PWA support** — web manifest, service worker, offline caching
+
+### Key Divergences from Original Plan
+- **Grid rendering**: Plan specified Skia Canvas; implementation uses RN ScrollView + Text. Simpler, performs well for web. Skia reserved for waveform/ADSR visualizations only.
+- **Layout**: Single-column vertical layout instead of Bitwig-style panels. Sensible for web-first release.
+- **Architecture**: Not a single `.jsx` artifact — proper modular architecture with engine/, components/, theme/, store.
+
+### Current Target
+Web-first release hosted on GitHub Pages as a PWA. Native mobile is a future task.

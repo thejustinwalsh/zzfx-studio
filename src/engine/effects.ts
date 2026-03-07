@@ -16,7 +16,7 @@ export function applyEffect(baseParams: ZzFXSound, effect: NoteEffect): ZzFXSoun
   const v = effect.value;
 
   switch (effect.code) {
-    case 'SU': // Slide Up — NES sweep unit (~1-2 semitone bend)
+    case 'SU': // Slide Up — retro sweep (~1-2 semitone bend)
       p[8] = (v / 255) * 0.8;
       break;
     case 'SD': // Slide Down

@@ -66,7 +66,14 @@ export function Slider({ label, value, min, max, step = 1, onValueChange, format
         <Text style={styles.label}>{label}</Text>
         <Text style={styles.value}>{displayValue}</Text>
       </View>
-      <View style={styles.track} onLayout={onLayout} {...panResponder.panHandlers}>
+      <View
+        style={styles.track}
+        onLayout={onLayout}
+        {...panResponder.panHandlers}
+        accessibilityRole="adjustable"
+        accessibilityLabel={label}
+        accessibilityValue={{ min, max, now: value, text: displayValue }}
+      >
         <View style={[styles.fill, { width: `${fraction * 100}%` }]} />
         <View style={[styles.thumb, { left: `${fraction * 100}%` }]} />
       </View>

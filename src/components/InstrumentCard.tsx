@@ -1,5 +1,6 @@
 import React, { useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, PanResponder } from 'react-native';
+import { PulsingView } from './PulsingView';
 import type { SharedValue } from 'react-native-reanimated';
 import { AnimatedPressable } from './AnimatedPressable';
 import { colors, channelColors, type ChannelIndex } from '../theme/colors';
@@ -25,6 +26,7 @@ interface InstrumentCardProps {
   onVolumeChange: (volume: number) => void;
   onPreview: () => void;
   onRegenerate: () => void;
+  isRendering?: boolean;
   adsrProgress?: SharedValue<number | null>;
 }
 
@@ -35,6 +37,7 @@ export function InstrumentCard({
   onVolumeChange,
   onPreview,
   onRegenerate,
+  isRendering,
   adsrProgress,
 }: InstrumentCardProps) {
   const chColor = channelColors[channelIndex].primary;
@@ -115,7 +118,7 @@ export function InstrumentCard({
         />
 
         {/* Volume slider */}
-        <View ref={trackRef} style={styles.volTrack} onLayout={onTrackLayout} {...panResponder.panHandlers}>
+        <View ref={trackRef} style={styles.volTrack} onLayout={onTrackLayout} {...panResponder.panHandlers} accessibilityRole="adjustable" accessibilityLabel={`${CHANNEL_LABELS[channelIndex]} volume`} accessibilityValue={{ min: 0, max: 1, now: fraction, text: `${Math.round(fraction * 100)}%` }}>
           <View style={[styles.volFill, { width: `${fraction * 100}%`, backgroundColor: chColor }]} />
           <View style={[styles.volThumb, { left: `${fraction * 100}%` }]} />
         </View>
@@ -125,15 +128,22 @@ export function InstrumentCard({
           <AnimatedPressable
             onPress={onPreview}
             style={styles.btn}
+            accessibilityRole="button"
+            accessibilityLabel={`Preview ${CHANNEL_LABELS[channelIndex]} instrument`}
           >
             <Text style={[styles.btnText, { color: chColor }]}>PLAY</Text>
           </AnimatedPressable>
-          <AnimatedPressable
-            onPress={onRegenerate}
-            style={styles.btnRegen}
-          >
-            <Text style={styles.btnRegenText}>R</Text>
-          </AnimatedPressable>
+          <PulsingView active={!!isRendering}>
+            <AnimatedPressable
+              onPress={onRegenerate}
+              disabled={isRendering}
+              style={styles.btnRegen}
+              accessibilityRole="button"
+              accessibilityLabel={`Regenerate ${CHANNEL_LABELS[channelIndex]} instrument`}
+            >
+              <Text style={styles.btnRegenText}>R</Text>
+            </AnimatedPressable>
+          </PulsingView>
         </View>
       </View>
     </View>

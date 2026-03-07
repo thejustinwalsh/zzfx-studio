@@ -1,4 +1,4 @@
-export { generateSong, regeneratePattern, regenerateChannel, songToZzfxm, renderSongBuffers } from './song';
+export { generateSong, regenerateForVibe, regenerateAllPatterns, regenerateWithNewLength, regeneratePattern, regenerateChannel, songToZzfxm, renderSongBuffers } from './song';
 export { generateInstruments } from './instruments';
 export { zzfxG, zzfxP, zzfxM, zzfxMChannels, unlockAudio, getAnalyser } from './zzfx';
 export { AudioGraph } from './audioGraph';
@@ -10,6 +10,8 @@ export { generateChordProgression } from './chords';
 export { songToCode, songToClipboard, codeToSong } from './serialize';
 export { applyEffect, generatePatternEffects, generateChannelEffects } from './effects';
 export { generateSongName } from './songNames';
+export { createRenderEngine } from './renderAsync';
+export type { StereoBuffer, RenderEngine } from './renderAsync';
 export type {
   Song,
   SongConfig,

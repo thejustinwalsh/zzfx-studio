@@ -18,6 +18,9 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
+# Workbox runtime (copied by workbox-cli copyLibraries)
+public/workbox-v*
+
 # Metro
 .metro-health-check*
 

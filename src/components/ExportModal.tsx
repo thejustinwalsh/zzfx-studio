@@ -1,22 +1,42 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { StyleSheet, Text, View, ScrollView, Modal } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withSequence,
+  withTiming,
+  cancelAnimation,
+  Easing,
+} from 'react-native-reanimated';
 import { AnimatedPressable } from './AnimatedPressable';
 import { colors, fonts, fontSize, spacing } from '../theme';
-import { zzfxM, zzfxP, unlockAudio, zzfxR } from '../engine/zzfx';
-import { songToZzfxm } from '../engine/song';
+import { zzfxP, unlockAudio, zzfxR, floatsToWav } from '../engine/zzfx';
 import { songToCode, songToClipboard } from '../engine/serialize';
 import type { Song } from '../engine/types';
+
+type StereoBuffer = [Float32Array, Float32Array];
 
 interface ExportModalProps {
   visible: boolean;
   song: Song;
   onClose: () => void;
+  renderPromise: Promise<StereoBuffer[]> | null;
 }
 
-// Lazy-loaded highlighter — resolved once, cached forever
+// Lazy-loaded highlighter — resolved once, cached forever.
+// Call prefetchHighlighter() to schedule loading during idle time.
 let _Highlighter: React.ComponentType<any> | null = null;
 let _highlighterStyle: Record<string, any> | null = null;
 let _loadPromise: Promise<void> | null = null;
+
+export function prefetchHighlighter(): void {
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(() => loadHighlighter());
+  } else {
+    setTimeout(() => loadHighlighter(), 2000);
+  }
+}
 
 function loadHighlighter(): Promise<void> {
   if (_Highlighter) return Promise.resolve();
@@ -28,14 +48,43 @@ function loadHighlighter(): Promise<void> {
     _Highlighter = hlModule.default || hlModule;
     _highlighterStyle = styleModule.default || styleModule;
   }).catch(() => {
-    // Silently fall back to plain text
     _loadPromise = null;
   });
   return _loadPromise;
 }
 
+const BAR_COUNT = 200;
+
+// Generate a fake waveform for the loading state — vaguely musical shape
+function generateFakeWaveform(): number[] {
+  const bars: number[] = [];
+  for (let i = 0; i < BAR_COUNT; i++) {
+    const pos = i / BAR_COUNT;
+    const envelope = Math.sin(pos * Math.PI) * 0.5 + 0.15;
+    const noise = Math.random() * 0.35;
+    bars.push(Math.min(1, envelope + noise));
+  }
+  return bars;
+}
+
+// Mix per-channel stereo buffers into a single stereo pair
+function mixChannels(buffers: StereoBuffer[]): [Float32Array, Float32Array] {
+  if (buffers.length === 0) return [new Float32Array(0), new Float32Array(0)];
+  const len = buffers[0][0].length;
+  const left = new Float32Array(len);
+  const right = new Float32Array(len);
+  for (let ch = 0; ch < buffers.length; ch++) {
+    const [cl, cr] = buffers[ch];
+    for (let i = 0; i < len; i++) {
+      left[i] += cl[i];
+      right[i] += cr[i];
+    }
+  }
+  return [left, right];
+}
+
 // Downsample stereo audio to a fixed number of bars (peak amplitude per bar)
-function computeWaveform(left: number[], right: number[], barCount: number): number[] {
+function computeWaveform(left: Float32Array, right: Float32Array, barCount: number): number[] {
   const len = left.length;
   if (len === 0) return new Array(barCount).fill(0);
   const samplesPerBar = Math.floor(len / barCount);
@@ -45,7 +94,7 @@ function computeWaveform(left: number[], right: number[], barCount: number): num
     const start = i * samplesPerBar;
     const end = Math.min(start + samplesPerBar, len);
     for (let j = start; j < end; j++) {
-      const v = Math.abs(left[j] || 0) + Math.abs(right[j] || 0);
+      const v = Math.abs(left[j]) + Math.abs(right[j]);
       if (v > peak) peak = v;
     }
     bars.push(peak);
@@ -54,41 +103,90 @@ function computeWaveform(left: number[], right: number[], barCount: number): num
   return bars.map(v => v / max);
 }
 
-export function ExportModal({ visible, song, onClose }: ExportModalProps) {
+export function ExportModal({ visible, song, onClose, renderPromise }: ExportModalProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackProgress, setPlaybackProgress] = useState(0);
   const [highlighterReady, setHighlighterReady] = useState(!!_Highlighter);
+  const [rendered, setRendered] = useState<{ left: Float32Array; right: Float32Array } | null>(null);
+  const [displayWaveform, setDisplayWaveform] = useState<number[]>([]);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
   const startTimeRef = useRef(0);
   const durationRef = useRef(0);
   const rafRef = useRef(0);
+  const lerpRafRef = useRef(0);
+  const fakeWaveformRef = useRef<number[]>([]);
 
-  // Kick off highlighter load when modal opens
+  // Ensure highlighter is ready when modal opens
   useEffect(() => {
-    if (visible && !_Highlighter) {
-      loadHighlighter().then(() => {
-        if (_Highlighter) setHighlighterReady(true);
-      });
+    if (!visible) return;
+    if (_Highlighter) {
+      setHighlighterReady(true);
+      return;
+    }
+    loadHighlighter().then(() => {
+      if (_Highlighter) setHighlighterReady(true);
+    });
+  }, [visible]);
+
+  // Generate fake waveform when modal opens
+  useEffect(() => {
+    if (visible && fakeWaveformRef.current.length === 0) {
+      fakeWaveformRef.current = generateFakeWaveform();
+      setDisplayWaveform(fakeWaveformRef.current);
+    }
+    if (!visible) {
+      fakeWaveformRef.current = [];
+      setDisplayWaveform([]);
     }
   }, [visible]);
 
-  // Pre-render the zzfxM output once when modal opens
-  const rendered = useMemo(() => {
-    if (!visible) return null;
-    const expanded = songToZzfxm(song);
-    const [left, right] = zzfxM(
-      expanded.instruments,
-      expanded.patterns,
-      expanded.sequence,
-      expanded.bpm,
-    );
-    return { left, right, expanded };
-  }, [visible, song]);
+  // Await the render promise when modal opens
+  useEffect(() => {
+    if (!visible || !renderPromise) {
+      setRendered(null);
+      return;
+    }
+    let cancelled = false;
+    renderPromise.then(buffers => {
+      if (cancelled) return;
+      const [left, right] = mixChannels(buffers);
+      setRendered({ left, right });
+    });
+    return () => { cancelled = true; };
+  }, [visible, renderPromise]);
 
-  const waveform = useMemo(() => {
-    if (!rendered) return [];
-    return computeWaveform(rendered.left, rendered.right, 200);
+  const isRendering = visible && !rendered;
+
+  const realWaveform = useMemo(() => {
+    if (!rendered) return null;
+    return computeWaveform(rendered.left, rendered.right, BAR_COUNT);
   }, [rendered]);
+
+  // Lerp from fake waveform to real waveform when render completes
+  useEffect(() => {
+    if (!realWaveform) return;
+    const from = displayWaveform.length === BAR_COUNT ? displayWaveform : fakeWaveformRef.current;
+    if (from.length !== BAR_COUNT) {
+      setDisplayWaveform(realWaveform);
+      return;
+    }
+    const duration = 400;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
+      const lerped = new Array(BAR_COUNT);
+      for (let i = 0; i < BAR_COUNT; i++) {
+        lerped[i] = from[i] + (realWaveform[i] - from[i]) * eased;
+      }
+      setDisplayWaveform(lerped);
+      if (t < 1) {
+        lerpRafRef.current = requestAnimationFrame(tick);
+      }
+    };
+    lerpRafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(lerpRafRef.current);
+  }, [realWaveform]);
 
   const code = useMemo(() => {
     if (!visible) return '';
@@ -103,8 +201,9 @@ export function ExportModal({ visible, song, onClose }: ExportModalProps) {
   useEffect(() => {
     if (!visible) {
       stopPlayback();
+      cancelAnimationFrame(lerpRafRef.current);
     }
-    return () => stopPlayback();
+    return () => { stopPlayback(); cancelAnimationFrame(lerpRafRef.current); };
   }, [visible]);
 
   const stopPlayback = useCallback(() => {
@@ -125,7 +224,7 @@ export function ExportModal({ visible, song, onClose }: ExportModalProps) {
     if (!rendered) return;
 
     unlockAudio();
-    const source = zzfxP([rendered.left, rendered.right]);
+    const source = zzfxP([rendered.left as any, rendered.right as any]);
     if (!source) return;
 
     sourceRef.current = source;
@@ -190,14 +289,46 @@ export function ExportModal({ visible, song, onClose }: ExportModalProps) {
     URL.revokeObjectURL(url);
   }, [code, song]);
 
+  const handleDownloadWav = useCallback(() => {
+    if (!rendered) return;
+    const blob = floatsToWav(rendered.left as any, rendered.right as any);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(song.config.name || 'zzfx-song').toLowerCase().replace(/\s+/g, '-')}.wav`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [rendered, song]);
+
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
+  // Pulsing opacity for loading state waveform
+  const pulseOpacity = useSharedValue(1);
+  useEffect(() => {
+    if (isRendering) {
+      pulseOpacity.value = withRepeat(
+        withSequence(
+          withTiming(0.25, { duration: 600, easing: Easing.inOut(Easing.ease) }),
+          withTiming(0.6, { duration: 600, easing: Easing.inOut(Easing.ease) }),
+        ),
+        -1, false,
+      );
+    } else {
+      cancelAnimation(pulseOpacity);
+      pulseOpacity.value = withTiming(1, { duration: 300 });
+    }
+  }, [isRendering, pulseOpacity]);
+
+  const waveformAnimStyle = useAnimatedStyle(() => ({
+    opacity: pulseOpacity.value,
+  }));
+
   const BAR_HEIGHT = 48;
-  const playheadIndex = Math.floor(playbackProgress * (waveform.length - 1));
+  const playheadIndex = Math.floor(playbackProgress * (displayWaveform.length - 1));
 
   if (!visible) return null;
 
@@ -220,10 +351,10 @@ export function ExportModal({ visible, song, onClose }: ExportModalProps) {
                 {song.config.vibe.toUpperCase()} / {song.config.key} {song.config.scale} / {song.config.bpm} BPM
               </Text>
               <Text style={styles.meta}>
-                {formatTime(duration)} / {song.patternOrder.length} patterns
+                {duration > 0 ? formatTime(duration) : '--:--'} / {song.patternOrder.length} patterns
               </Text>
             </View>
-            <AnimatedPressable onPress={onClose} style={styles.closeBtn}>
+            <AnimatedPressable onPress={onClose} style={styles.closeBtn} accessibilityRole="button" accessibilityLabel="Close export modal">
               <Text style={styles.closeBtnText}>X</Text>
             </AnimatedPressable>
           </View>
@@ -231,10 +362,10 @@ export function ExportModal({ visible, song, onClose }: ExportModalProps) {
           {/* Waveform */}
           <View style={styles.waveformSection}>
             <View style={styles.waveformContainer}>
-              <View style={[styles.waveformBars, { height: BAR_HEIGHT }]}>
-                {waveform.map((v, i) => {
+              <Animated.View style={[styles.waveformBars, { height: BAR_HEIGHT }, waveformAnimStyle]}>
+                {displayWaveform.map((v, i) => {
                   const barH = Math.max(1, v * BAR_HEIGHT);
-                  const isPast = i <= playheadIndex && isPlaying;
+                  const isPast = !isRendering && i <= playheadIndex && isPlaying;
                   return (
                     <View
                       key={i}
@@ -242,18 +373,18 @@ export function ExportModal({ visible, song, onClose }: ExportModalProps) {
                         styles.waveformBar,
                         {
                           height: barH,
-                          backgroundColor: isPast ? colors.accentPrimary : colors.textDim,
+                          backgroundColor: isPast ? colors.accentPrimary : isRendering ? colors.borderSubtle : colors.textDim,
                         },
                       ]}
                     />
                   );
                 })}
-              </View>
+              </Animated.View>
               <View style={styles.timeRow}>
                 <Text style={styles.timeText}>
                   {isPlaying ? formatTime(playbackProgress * duration) : '0:00'}
                 </Text>
-                <Text style={styles.timeText}>{formatTime(duration)}</Text>
+                <Text style={styles.timeText}>{duration > 0 ? formatTime(duration) : '--:--'}</Text>
               </View>
             </View>
           </View>
@@ -262,20 +393,32 @@ export function ExportModal({ visible, song, onClose }: ExportModalProps) {
           <View style={styles.transport}>
             <AnimatedPressable
               onPress={handlePlay}
-              style={[styles.playBtn, isPlaying && styles.playBtnActive]}
+              disabled={isRendering}
+              style={[styles.playBtn, isPlaying && styles.playBtnActive, isRendering && styles.btnDisabled]}
+              accessibilityRole="button"
+              accessibilityLabel={isPlaying ? 'Stop preview' : 'Play ZzFXM preview'}
             >
-              <Text style={[styles.playBtnText, isPlaying && styles.playBtnTextActive]}>
+              <Text style={[styles.playBtnText, isPlaying && styles.playBtnTextActive, isRendering && styles.btnDisabledText]}>
                 {isPlaying ? 'STOP' : 'PLAY ZZFXM'}
               </Text>
             </AnimatedPressable>
-            <AnimatedPressable onPress={handleCopy} style={styles.actionBtn}>
+            <AnimatedPressable onPress={handleCopy} style={styles.actionBtn} accessibilityRole="button" accessibilityLabel="Copy one-liner code to clipboard">
               <Text style={styles.actionBtnText}>COPY ONELINER</Text>
             </AnimatedPressable>
-            <AnimatedPressable onPress={handleCopyFull} style={styles.actionBtn}>
+            <AnimatedPressable onPress={handleCopyFull} style={styles.actionBtn} accessibilityRole="button" accessibilityLabel="Copy full code to clipboard">
               <Text style={styles.actionBtnText}>COPY CODE</Text>
             </AnimatedPressable>
-            <AnimatedPressable onPress={handleDownload} style={styles.actionBtn}>
+            <AnimatedPressable onPress={handleDownload} style={styles.actionBtn} accessibilityRole="button" accessibilityLabel="Download as JavaScript file">
               <Text style={styles.actionBtnText}>DOWNLOAD .JS</Text>
+            </AnimatedPressable>
+            <AnimatedPressable
+              onPress={handleDownloadWav}
+              disabled={isRendering}
+              style={[styles.actionBtn, isRendering && styles.btnDisabled]}
+              accessibilityRole="button"
+              accessibilityLabel="Download as WAV audio file"
+            >
+              <Text style={[styles.actionBtnText, isRendering && styles.btnDisabledText]}>DOWNLOAD .WAV</Text>
             </AnimatedPressable>
           </View>
 
@@ -404,6 +547,8 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     borderWidth: 1,
     borderColor: colors.accentPlay,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   playBtnActive: {
     borderColor: colors.accentStop,
@@ -418,6 +563,12 @@ const styles = StyleSheet.create({
   },
   playBtnTextActive: {
     color: colors.bgPrimary,
+  },
+  btnDisabled: {
+    borderColor: colors.borderSubtle,
+  },
+  btnDisabledText: {
+    color: colors.textDim,
   },
   actionBtn: {
     paddingHorizontal: spacing.lg,

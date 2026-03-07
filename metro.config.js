@@ -8,4 +8,7 @@ const config = getDefaultConfig(__dirname);
 config.resolver.unstable_enablePackageExports = true;
 config.resolver.unstable_conditionNames = ['require', 'react-native', 'browser', 'default'];
 
+// Add woff2 as a recognized asset extension
+config.resolver.assetExts = [...config.resolver.assetExts, 'woff2'];
+
 module.exports = config;

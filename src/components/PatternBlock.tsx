@@ -40,6 +40,9 @@ export function PatternBlock({
         },
         playing && styles.playing,
       ]}
+      accessibilityRole="button"
+      accessibilityLabel={`Pattern ${label}${active ? ', selected' : ''}${playing ? ', playing' : ''}`}
+      accessibilityState={{ selected: active }}
     >
       <Text style={[
         styles.label,

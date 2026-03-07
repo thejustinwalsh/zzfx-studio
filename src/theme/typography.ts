@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 
 export const fonts = {
   mono: Platform.select({
-    web: '"Berkeley Mono", "JetBrains Mono", "Fira Code", "SF Mono", monospace',
+    web: '"JetBrains Mono", "Berkeley Mono", "Fira Code", "SF Mono", monospace',
     default: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   }) as string,
   ui: Platform.select({

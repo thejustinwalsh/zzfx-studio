@@ -31,15 +31,15 @@ The app provides **two distinct layouts** that activate based on viewport:
 
 ```
 LANDSCAPE (width > height, or width >= 768px)
-+-------------------------------------------------------+
-|  HEADER BAR (transport + config)                       |
-+----------+----------------------------+--------+-------+
++------------------------------------------------+
+|  HEADER BAR (transport + config)               |
++----------+----------------------------+--------+
 |  PATTERN |   TRACKER GRID             | INST   |
 |  SEQ     |   (Skia Canvas)            | PANEL  |
 |  (left)  |                            | (right)|
 +----------+----------------------------+--------+
-|  DETAIL BAR (generation controls + status)      |
-+-------------------------------------------------------+
+|  DETAIL BAR (generation controls + status)     |
++------------------------------------------------+
 
 PORTRAIT (width < height, or width < 768px)
 +---------------------------+
@@ -49,7 +49,7 @@ PORTRAIT (width < height, or width < 768px)
 +---------------------------+
 |                           |
 |  TRACKER GRID             |
-|  (Skia Canvas, full w)   |
+|  (Skia Canvas, full w)    |
 |                           |
 +---------------------------+
 |  TAB BAR                  |
@@ -234,9 +234,9 @@ Since Skia canvas doesn't have native hit-testing:
 ### Header Bar
 
 ```
-+--------------------------------------------------------------+
++-----------------------------------------------------------------+
 |  [PLAY] [STOP] [LOOP]  |  BPM: 120  |  KEY: C  MINOR  |  [GEN]  |
-+--------------------------------------------------------------+
++-----------------------------------------------------------------+
 
 - Transport buttons: icon-only on mobile, icon+label on desktop
 - BPM: tappable, opens slider/stepper
@@ -311,19 +311,19 @@ Playback cursor:
 |  INSTRUMENTS                      |
 +-----------------------------------+
 |  [0] PULSE LEAD     [preview] [R] |
-|  ┌─ Wave: Pulse ─── ADSR ──────┐ |
-|  │  ╱‾‾‾\___                    │ |
-|  │  A  D  S  R                   │ |
-|  └──────────────────────────────┘ |
-|                                    |
-|  [1] HARMONY         [preview] [R] |
-|  ┌─ Wave: Pulse ─── ADSR ──────┐ |
+|  ┌─ Wave: Pulse ─── ADSR ──────┐  |
+|  │  ╱‾‾‾\___                   │  |
+|  │  A  D  S  R                 │  |
+|  └─────────────────────────────┘  |
+|                                   |
+|  [1] HARMONY        [preview] [R] |
+|  ┌─ Wave: Pulse ─── ADSR ───────┐ |
 |  │  ╱‾\__                       │ |
 |  └──────────────────────────────┘ |
-|                                    |
-|  [2] TRI BASS        [preview] [R] |
-|  [3] KICK            [preview] [R] |
-|  [4] SNARE/HAT       [preview] [R] |
+|                                   |
+|  [2] TRI BASS       [preview] [R] |
+|  [3] KICK           [preview] [R] |
+|  [4] SNARE/HAT      [preview] [R] |
 +-----------------------------------+
 
 - Each instrument shows: waveform shape label, mini ADSR graph (Skia)
@@ -335,9 +335,9 @@ Playback cursor:
 ### Detail Bar / Generation Panel (bottom)
 
 ```
-+--------------------------------------------------------------+
++-----------------------------------------------------------------------------------+
 |  VIBE: [Adventure v]  |  Generate: [Full Song] [Pattern] [Channel] [Instruments]  |
-+--------------------------------------------------------------+
++-----------------------------------------------------------------------------------+
 
 - Vibe selector: dropdown with game genre templates
 - Generate buttons: segmented control, purple accent

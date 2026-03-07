@@ -26,6 +26,9 @@ export function Dropdown<T extends string>({ label, value, options, onSelect, co
       <Pressable
         style={({ pressed }) => [compact ? styles.triggerCompact : styles.trigger, pressed && styles.pressed]}
         onPress={() => setOpen(true)}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}: ${value}`}
+        accessibilityHint="Opens selection menu"
       >
         {compact && <Text style={styles.labelInline}>{label}</Text>}
         <Text style={compact ? styles.valueCompact : styles.value}>{value}</Text>

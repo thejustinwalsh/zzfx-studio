@@ -1,6 +1,6 @@
 import { VibeName, VibeConfig } from './types';
 
-// Structure templates follow NES/GB conventions:
+// Structure templates follow retro conventions:
 //
 // Short (4-6 patterns, ~15-25s): A/B only. Simple alternation.
 //   Authentic for: jingles, short battle themes, victory fanfares

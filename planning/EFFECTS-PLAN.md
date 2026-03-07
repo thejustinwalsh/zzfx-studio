@@ -2,18 +2,18 @@
 
 ## Overview
 
-Add per-note effects to the tracker, authentic to NES/GameBoy era chiptune music. Effects are displayed as a 2-char code + 2-digit hex value in an FX column next to each track's note column. Under the hood, notes with effects are routed to separate physical ZzFXM channels using instrument variants with the effect baked into the ZzFX parameters.
+Add per-note effects to the tracker, authentic to retro-era chiptune music. Effects are displayed as a 2-char code + 2-digit hex value in an FX column next to each track's note column. Under the hood, notes with effects are routed to separate physical ZzFXM channels using instrument variants with the effect baked into the ZzFX parameters.
 
 ---
 
-## Effect Selection (NES/GB Authentic)
+## Effect Selection (Retro Authentic)
 
 8 effects chosen for authenticity and ZzFX parameter coverage:
 
-| Code | Name | ZzFX Param(s) Modified | NES/GB Equivalent | Value Range |
+| Code | Name | ZzFX Param(s) Modified | Retro Equivalent | Value Range |
 |------|------|----------------------|-------------------|-------------|
-| `SU` | Slide Up | `slide` (+) | NES sweep unit (pulse ch) | `01-FF` speed |
-| `SD` | Slide Down | `slide` (-) | NES sweep unit | `01-FF` speed |
+| `SU` | Slide Up | `slide` (+) | Sweep unit (pulse ch) | `01-FF` speed |
+| `SD` | Slide Down | `slide` (-) | Sweep unit | `01-FF` speed |
 | `VB` | Vibrato | `repeatTime` + `tremolo` | Software vibrato | `XY` X=speed Y=depth |
 | `DT` | Duty Cycle | `shapeCurve` | Pulse width (12.5/25/50%) | `01-03` preset |
 | `ST` | Staccato | `sustain` * factor, `release` * factor | Short envelope | `01-FF` length |
@@ -23,19 +23,19 @@ Add per-note effects to the tracker, authentic to NES/GameBoy era chiptune music
 
 ### Why These Effects
 
-- **SU/SD** (Slide): The NES 2A03's pulse channels had a hardware sweep unit for automatic pitch slides. This is THE signature NES effect (Mega Man slide-in notes, Zelda item fanfares).
-- **VB** (Vibrato): Software-implemented on NES by rapidly modulating the frequency register. Used in every RPG, especially on sustained melody notes.
-- **DT** (Duty Cycle): The pulse channels could switch between 12.5%, 25%, and 50% duty cycles. Different widths = different timbres from the same channel. Quintessential GB/NES.
+- **SU/SD** (Slide): Classic retro hardware sweep for automatic pitch slides. Signature chiptune effect.
+- **VB** (Vibrato): Rapid frequency modulation. Used in RPGs, especially on sustained melody notes.
+- **DT** (Duty Cycle): Switch between 12.5%, 25%, and 50% duty cycles. Different widths = different timbres from the same channel.
 - **ST** (Staccato): Envelope manipulation to cut notes short. Used for rhythmic lead lines, staccato bass hits.
 - **PD** (Pitch Drop): Quick downward pitch sweep. Used for percussion-like melodic hits, tom sounds, and dramatic falls.
-- **BC** (Bit Crush): While not strictly NES-era, it maps to the lo-fi aesthetic and gives that crunchy chiptune character.
+- **BC** (Bit Crush): Lo-fi aesthetic — gives that crunchy chiptune character.
 - **TR** (Tremolo): Volume oscillation. Used in dungeon themes and atmospheric sections.
 
 ### Effects NOT Included (and why)
 
 - **Arpeggio** (0xy): Already handled by the harmony channel's arpeggio generation.
-- **Echo/Delay**: Not authentic to NES/GB hardware (no delay line). Our existing `echoed` trait handles this at the instrument level.
-- **FM Wobble**: Not NES/GB authentic (that's FM synthesis territory).
+- **Echo/Delay**: Not authentic to retro hardware (no delay line). Our existing `echoed` trait handles this at the instrument level.
+- **FM Wobble**: Not retro-authentic (that's FM synthesis territory).
 
 ---
 
@@ -216,7 +216,7 @@ Effects are assigned during pattern generation based on:
 
 ```
 PHRASE START (row 0, 8, 16, 24):
-  → 40% chance: SU (scoop into the note — classic NES lead technique)
+  → 40% chance: SU (scoop into the note — classic retro lead technique)
   → 20% chance: PD (dramatic pitch drop entrance)
 
 PHRASE END (row 7, 15, 23, 31):

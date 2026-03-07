@@ -55,6 +55,7 @@ interface SongState {
   setSoloChannel: (ch: number | null) => void;
 
   // Compound actions
+  renameSong: (name: string) => void;
   loadSong: (song: Song) => void;
   generate: (v: VibeName, k: NoteName, s: ScaleName, b: number, l: SongLength) => Song;
   toggleMute: (ch: number) => void;
@@ -121,6 +122,12 @@ export const useSongStore = create<SongState>()(
         return syncToProject({ mutedChannels }, s);
       }),
       setSoloChannel: (soloChannel) => set((s) => syncToProject({ soloChannel }, s)),
+
+      renameSong: (name) => set((s) => {
+        if (!s.song) return {};
+        const song = { ...s.song, config: { ...s.song.config, name } };
+        return syncToProject({ song }, s);
+      }),
 
       loadSong: (song) => {
         // Import from file — create a new project for it
@@ -251,7 +258,7 @@ export const useSongStore = create<SongState>()(
       }),
     }),
     {
-      name: 'zzfx-gen-studio',
+      name: 'zzfx-studio',
       version: 2,
       // Only persist data, not callbacks
       partialize: (state) => ({

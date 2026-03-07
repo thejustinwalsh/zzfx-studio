@@ -68,6 +68,9 @@ const ProjectRow = React.memo(function ProjectRow({
     <Pressable
       onPress={handlePress}
       style={[styles.row, isActive && styles.rowActive]}
+      accessibilityRole="button"
+      accessibilityLabel={`Load project: ${name}`}
+      accessibilityState={{ selected: isActive }}
     >
       <View style={styles.avatarCol}>
         <RetroAvatar name={name} size={36} color={isActive ? colors.accentPrimary : colors.textSecondary} />
@@ -114,6 +117,8 @@ const ProjectRow = React.memo(function ProjectRow({
         <Pressable
           onPress={handleDelete}
           style={styles.deleteBtn}
+          accessibilityRole="button"
+          accessibilityLabel={`Delete project: ${name}`}
         >
           <Text style={styles.deleteBtnText}>X</Text>
         </Pressable>
@@ -176,7 +181,7 @@ export function LoadModal({ visible, onClose, onProjectLoaded }: LoadModalProps)
           <View style={styles.header}>
             <Text style={styles.title}>LOAD PROJECT</Text>
             <Text style={styles.countText}>{sortedProjects.length} projects</Text>
-            <Pressable onPress={onClose} style={styles.closeBtn}>
+            <Pressable onPress={onClose} style={styles.closeBtn} accessibilityRole="button" accessibilityLabel="Close load modal">
               <Text style={styles.closeBtnText}>X</Text>
             </Pressable>
           </View>

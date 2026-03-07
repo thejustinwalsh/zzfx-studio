@@ -1,7 +1,7 @@
 import { useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
 import { useSharedValue } from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View, ScrollView } from 'react-native';
+import { StyleSheet, Text, TextInput, View, ScrollView } from 'react-native';
 import { AnimatedPressable } from './src/components/AnimatedPressable';
 import { colors, fonts, fontSize, spacing } from './src/theme';
 import {
@@ -15,14 +15,20 @@ import {
   LoadModal,
   BrandTitle,
   RetroAvatar,
+  PulsingView,
+  UpdateBanner,
   computeBarColors,
+  prefetchHighlighter,
 } from './src/components';
 import type { ChannelNote, RGB } from './src/components';
 import {
   generateSong,
+  regenerateForVibe,
+  regenerateAllPatterns,
+  regenerateWithNewLength,
   regeneratePattern,
   regenerateChannel,
-  renderSongBuffers,
+  createRenderEngine,
   generateInstruments,
   zzfxP,
   zzfxG,
@@ -56,6 +62,9 @@ const CHANNEL_COLORS = [colors.ch0Primary, colors.ch1Primary, colors.ch2Primary,
 // Initialize store after hydration (generates random song if none persisted)
 initializeStore();
 
+// Prefetch syntax highlighter for export modal during idle time
+prefetchHighlighter();
+
 export default function App() {
   const hydrated = useStoreHydrated();
 
@@ -74,15 +83,47 @@ export default function App() {
   const {
     setSong, setVibe, setKey, setScale, setBpm, setSongLength,
     setActivePattern, toggleMute, toggleSolo, updateVolume,
-    generate, loadSong,
+    generate, loadSong, renameSong,
   } = useSongStore.getState();
+
+  // Editable song name — local state for responsive typing, debounced to store
+  const [editingName, setEditingName] = useState<string | null>(null);
+  const nameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const displayName = editingName ?? song?.config.name ?? 'ZZFX STUDIO';
+
+  const handleNameChange = useCallback((text: string) => {
+    setEditingName(text);
+    if (nameTimerRef.current) clearTimeout(nameTimerRef.current);
+    nameTimerRef.current = setTimeout(() => {
+      renameSong(text);
+    }, 400);
+  }, []);
+
+  const handleNameBlur = useCallback(() => {
+    if (nameTimerRef.current) clearTimeout(nameTimerRef.current);
+    if (editingName !== null) {
+      renameSong(editingName);
+      setEditingName(null);
+    }
+  }, [editingName]);
+
+  // Sync local name when song changes externally (reroll, load, vibe change)
+  const prevSongRef = useRef(song);
+  useEffect(() => {
+    if (song !== prevSongRef.current) {
+      prevSongRef.current = song;
+      setEditingName(null);
+    }
+  }, [song]);
 
   // Ephemeral state (not persisted)
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRow, setPlaybackRow] = useState<number | null>(null);
   const [playbackPatternIdx, setPlaybackPatternIdx] = useState(0);
   const [flashChannels, setFlashChannels] = useState<Set<number>>(new Set());
+  const [renderingChannels, setRenderingChannels] = useState<Set<number>>(new Set());
   const [showExport, setShowExport] = useState(false);
+  const exportPromiseRef = useRef<Promise<[Float32Array, Float32Array][]> | null>(null);
   const [showLoad, setShowLoad] = useState(false);
 
   // ADSR progress shared values — driven from RAF, consumed by WaveformPreview on UI thread
@@ -97,7 +138,9 @@ export default function App() {
 
   // Refs
   const audioGraphRef = useRef<AudioGraph | null>(null);
-  const channelBuffersRef = useRef<[number[], number[]][]>([]);
+  const renderEngineRef = useRef(createRenderEngine());
+  const channelBuffersRef = useRef<([number[] | Float32Array, number[] | Float32Array])[]>([]);
+  const renderSeqRef = useRef(0); // Monotonic counter — only used for BPM debounce
   const rafRef = useRef<number>(0);
   const bpmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const volTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -130,13 +173,18 @@ export default function App() {
     return muted;
   }, [getEffectiveGain]);
 
-  // Eagerly pre-render audio buffers when song changes so play is instant
+  // Eagerly pre-render audio buffers when song changes so play is instant.
+  // Skip when playing — hot-swap handlers manage their own renders.
   useEffect(() => {
-    if (!song) return;
-    const buffers = renderSongBuffers(song);
-    if (buffers.length > 0 && buffers[0][0].length > 0) {
-      channelBuffersRef.current = buffers;
-    }
+    if (!song || audioGraphRef.current?.isPlaying) return;
+    let cancelled = false;
+    renderEngineRef.current.renderSongBuffers(song).then(buffers => {
+      if (cancelled) return;
+      if (buffers.length > 0 && buffers[0][0].length > 0) {
+        channelBuffersRef.current = buffers;
+      }
+    });
+    return () => { cancelled = true; };
   }, [song]);
 
   // Compute fixed section colors per pattern label
@@ -263,24 +311,54 @@ export default function App() {
     setTimeout(() => setFlashChannels(new Set()), 150);
   }, []);
 
-  // Skip auto-regen when generate() was called directly (e.g. reroll)
-  const skipAutoRegen = useRef(false);
-
-  // Auto-regen when vibe/key/scale/length changes (from dropdown selections)
-  const isInitialMount = useRef(true);
-  useEffect(() => {
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      return;
-    }
-    if (skipAutoRegen.current) {
-      skipAutoRegen.current = false;
-      return;
-    }
-    generate(vibe, key, scale, bpm, songLength);
+  // Per-control regen handlers with minimal regeneration
+  const handleVibeChange = useCallback((newVibe: VibeName) => {
+    // Vibe changes instruments, structure, patterns, effects, BPM.
+    // Keeps name, key, scale, length. Stays in current project.
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
+    const updated = regenerateForVibe(currentSong, newVibe);
+    setVibe(newVibe);
+    setBpm(updated.config.bpm);
+    setSong(updated);
+    setActivePattern(updated.patternOrder[0]);
     flashChannel([0, 1, 2, 3]);
     if (audioGraphRef.current?.isPlaying) stopPlayback();
-  }, [vibe, key, scale, songLength, stopPlayback]);
+  }, [flashChannel, stopPlayback]);
+
+  const handleKeyChange = useCallback((newKey: NoteName) => {
+    // Key only affects note content — keep instruments and structure
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
+    setKey(newKey);
+    const updated = regenerateAllPatterns(currentSong, { key: newKey });
+    setSong(updated);
+    flashChannel([0, 1, 2, 3]);
+    if (audioGraphRef.current?.isPlaying) stopPlayback();
+  }, [flashChannel, stopPlayback]);
+
+  const handleScaleChange = useCallback((newScale: ScaleName) => {
+    // Scale only affects note content — keep instruments and structure
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
+    setScale(newScale);
+    const updated = regenerateAllPatterns(currentSong, { scale: newScale });
+    setSong(updated);
+    flashChannel([0, 1, 2, 3]);
+    if (audioGraphRef.current?.isPlaying) stopPlayback();
+  }, [flashChannel, stopPlayback]);
+
+  const handleLengthChange = useCallback((newLength: SongLength) => {
+    // Length changes structure template + patterns, but keeps instruments
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
+    setSongLength(newLength);
+    const updated = regenerateWithNewLength(currentSong, newLength);
+    setSong(updated);
+    setActivePattern(updated.patternOrder[0]);
+    flashChannel([0, 1, 2, 3]);
+    if (audioGraphRef.current?.isPlaying) stopPlayback();
+  }, [flashChannel, stopPlayback]);
 
   // Live BPM change — debounced re-render + hot-swap while playing
   useEffect(() => {
@@ -299,12 +377,15 @@ export default function App() {
       const newSong = { ...currentSong, config: { ...currentSong.config, bpm } };
       setSong(newSong);
 
-      const buffers = renderSongBuffers(newSong);
-      if (buffers.length === 0 || buffers[0][0].length === 0) return;
+      const seq = ++renderSeqRef.current;
+      renderEngineRef.current.renderSongBuffers(newSong).then(buffers => {
+        if (renderSeqRef.current !== seq) return; // Newer BPM change supersedes
+        if (buffers.length === 0 || buffers[0][0].length === 0) return;
 
-      channelBuffersRef.current = buffers;
-      const songDuration = buffers[0][0].length / 44100;
-      audioGraphRef.current?.replaceAllChannels(buffers, songDuration, bpm);
+        channelBuffersRef.current = buffers;
+        const songDuration = buffers[0][0].length / 44100;
+        audioGraphRef.current?.replaceAllChannels(buffers, songDuration, bpm);
+      });
     }, 80);
 
     return () => {
@@ -312,7 +393,7 @@ export default function App() {
     };
   }, [bpm]);
 
-  // Re-roll everything: random vibe, key, scale
+  // Re-roll everything: random vibe, key, scale, length, bpm
   const handleReroll = useCallback(() => {
     unlockAudio();
     const newVibe = pick(VIBE_OPTIONS);
@@ -320,13 +401,13 @@ export default function App() {
     const newKey = pick(KEY_OPTIONS);
     const newScale = pick(vibeConf.preferredScales);
     const newBpm = vibeConf.bpmRange[0] + Math.floor(Math.random() * (vibeConf.bpmRange[1] - vibeConf.bpmRange[0] + 1));
-    skipAutoRegen.current = true;
-    generate(newVibe, newKey, newScale, newBpm, useSongStore.getState().songLength);
+    const newLength = pick(LENGTH_OPTIONS);
+    generate(newVibe, newKey, newScale, newBpm, newLength);
     flashChannel([0, 1, 2, 3]);
     if (audioGraphRef.current?.isPlaying) stopPlayback();
   }, [flashChannel, stopPlayback]);
 
-  const handlePlay = useCallback(() => {
+  const handlePlay = useCallback(async () => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong) return;
     unlockAudio();
@@ -341,7 +422,7 @@ export default function App() {
     // Use pre-rendered buffers if available, otherwise render now
     let buffers = channelBuffersRef.current;
     if (buffers.length === 0 || buffers[0][0].length === 0) {
-      buffers = renderSongBuffers(currentSong);
+      buffers = await renderEngineRef.current.renderSongBuffers(currentSong);
       channelBuffersRef.current = buffers;
     }
     if (buffers.length === 0 || buffers[0][0].length === 0) return;
@@ -383,14 +464,19 @@ export default function App() {
       patterns: { ...currentSong.patterns, [ap]: pattern },
       patternEffects: { ...currentSong.patternEffects, [ap]: effects },
     };
-    setSong(newSong);
-    flashChannel([channelIndex]);
 
-    // Hot-swap while playing
     if (audioGraphRef.current?.isPlaying) {
-      const buffers = renderSongBuffers(newSong);
-      channelBuffersRef.current[channelIndex] = buffers[channelIndex];
-      audioGraphRef.current.replaceChannel(channelIndex, buffers[channelIndex]);
+      setRenderingChannels(prev => new Set(prev).add(channelIndex));
+      renderEngineRef.current.renderSongBuffers(newSong).then(buffers => {
+        setSong(newSong);
+        flashChannel([channelIndex]);
+        setRenderingChannels(prev => { const next = new Set(prev); next.delete(channelIndex); return next; });
+        channelBuffersRef.current[channelIndex] = buffers[channelIndex];
+        audioGraphRef.current?.replaceChannel(channelIndex, buffers[channelIndex]);
+      });
+    } else {
+      setSong(newSong);
+      flashChannel([channelIndex]);
     }
   }, [flashChannel]);
 
@@ -401,19 +487,28 @@ export default function App() {
     const newAll = generateInstruments(currentSong.config.vibe);
     newInstruments[channelIndex] = newAll[channelIndex];
     const newSong = { ...currentSong, instruments: newInstruments };
-    setSong(newSong);
     const newVol = newInstruments[channelIndex][0] ?? 1;
-    useSongStore.getState().setChannelVolumes(prev => {
-      const next = [...prev];
-      next[channelIndex] = newVol;
-      return next;
-    });
 
-    // Hot-swap while playing
     if (audioGraphRef.current?.isPlaying) {
-      const buffers = renderSongBuffers(newSong);
-      channelBuffersRef.current[channelIndex] = buffers[channelIndex];
-      audioGraphRef.current.replaceChannel(channelIndex, buffers[channelIndex]);
+      setRenderingChannels(prev => new Set(prev).add(channelIndex));
+      renderEngineRef.current.renderSongBuffers(newSong).then(buffers => {
+        setSong(newSong);
+        useSongStore.getState().setChannelVolumes(prev => {
+          const next = [...prev];
+          next[channelIndex] = newVol;
+          return next;
+        });
+        setRenderingChannels(prev => { const next = new Set(prev); next.delete(channelIndex); return next; });
+        channelBuffersRef.current[channelIndex] = buffers[channelIndex];
+        audioGraphRef.current?.replaceChannel(channelIndex, buffers[channelIndex]);
+      });
+    } else {
+      setSong(newSong);
+      useSongStore.getState().setChannelVolumes(prev => {
+        const next = [...prev];
+        next[channelIndex] = newVol;
+        return next;
+      });
     }
   }, []);
 
@@ -426,9 +521,10 @@ export default function App() {
       volTimerRef.current = setTimeout(() => {
         const currentSong = useSongStore.getState().song;
         if (!currentSong) return;
-        const buffers = renderSongBuffers(currentSong);
-        channelBuffersRef.current[channelIndex] = buffers[channelIndex];
-        audioGraphRef.current?.replaceChannel(channelIndex, buffers[channelIndex]);
+        renderEngineRef.current.renderSongBuffers(currentSong).then(buffers => {
+          channelBuffersRef.current[channelIndex] = buffers[channelIndex];
+          audioGraphRef.current?.replaceChannel(channelIndex, buffers[channelIndex]);
+        });
       }, 100);
     }
   }, []);
@@ -470,6 +566,7 @@ export default function App() {
       cancelAnimationFrame(rafRef.current);
       audioGraphRef.current?.stop();
       if (volTimerRef.current) clearTimeout(volTimerRef.current);
+      if (nameTimerRef.current) clearTimeout(nameTimerRef.current);
     };
   }, []);
 
@@ -593,28 +690,37 @@ export default function App() {
       {/* Header / Controls */}
       <View style={styles.header}>
         <View style={styles.titleLeft}>
-          {song && <RetroAvatar name={song.config.name} size={16} color={colors.accentPrimary} />}
-          <Text style={styles.title}>{song?.config.name ?? 'ZZFX STUDIO'}</Text>
+          {song && <RetroAvatar name={displayName} size={16} color={colors.accentPrimary} />}
+          <TextInput
+            style={[styles.title, { outlineStyle: 'none' } as any]}
+            value={displayName}
+            onChangeText={handleNameChange}
+            onBlur={handleNameBlur}
+            selectTextOnFocus
+            maxLength={40}
+            accessibilityLabel="Song name"
+            accessibilityHint="Tap to edit the song name"
+          />
         </View>
         <View style={styles.controls}>
           <View style={styles.transportWrapper}>
             <View style={styles.transportSpacer} />
             <View style={styles.transport}>
-              <AnimatedPressable onPress={handleReroll} style={[styles.transportBtn, styles.transportBtnRegen]}>
+              <AnimatedPressable onPress={handleReroll} style={[styles.transportBtn, styles.transportBtnRegen]} accessibilityRole="button" accessibilityLabel="Generate new random song">
                 <Text style={[styles.transportIcon, styles.transportIconRegen, { color: colors.accentGenerate }]}>⟳</Text>
               </AnimatedPressable>
-              <AnimatedPressable onPress={handlePlay} disabled={!song} style={[styles.transportBtn, isPlaying && styles.transportBtnActive, !song && { opacity: 0.4 }]}>
+              <AnimatedPressable onPress={handlePlay} disabled={!song} style={[styles.transportBtn, isPlaying && styles.transportBtnActive, !song && { opacity: 0.4 }]} accessibilityRole="button" accessibilityLabel={isPlaying ? 'Restart playback' : 'Play song'}>
                 <Text style={[styles.transportIcon, isPlaying && styles.transportIconActive]}>▶</Text>
               </AnimatedPressable>
-              <AnimatedPressable onPress={handleStop} disabled={!isPlaying} style={[styles.transportBtn, !isPlaying && { opacity: 0.4 }]}>
+              <AnimatedPressable onPress={handleStop} disabled={!isPlaying} style={[styles.transportBtn, !isPlaying && { opacity: 0.4 }]} accessibilityRole="button" accessibilityLabel="Stop playback">
                 <Text style={[styles.transportIcon, { color: colors.accentStop }]}>■</Text>
               </AnimatedPressable>
             </View>
           </View>
-          <Dropdown label="VIBE" value={vibe} options={VIBE_OPTIONS} onSelect={(v) => setVibe(v as VibeName)} />
-          <Dropdown label="KEY" value={key} options={KEY_OPTIONS} onSelect={(v) => setKey(v as NoteName)} />
-          <Dropdown label="SCALE" value={scale} options={SCALE_OPTIONS} onSelect={(v) => setScale(v as ScaleName)} />
-          <Dropdown label="LENGTH" value={songLength} options={LENGTH_OPTIONS} onSelect={(v) => setSongLength(v as SongLength)} />
+          <Dropdown label="VIBE" value={vibe} options={VIBE_OPTIONS} onSelect={(v) => handleVibeChange(v as VibeName)} />
+          <Dropdown label="KEY" value={key} options={KEY_OPTIONS} onSelect={(v) => handleKeyChange(v as NoteName)} />
+          <Dropdown label="SCALE" value={scale} options={SCALE_OPTIONS} onSelect={(v) => handleScaleChange(v as ScaleName)} />
+          <Dropdown label="LENGTH" value={songLength} options={LENGTH_OPTIONS} onSelect={(v) => handleLengthChange(v as SongLength)} />
           <Slider label="BPM" value={bpm} min={80} max={180} step={1} onValueChange={setBpm} />
         </View>
       </View>
@@ -628,18 +734,29 @@ export default function App() {
               <AnimatedPressable
                 onPress={() => setShowLoad(true)}
                 style={styles.actionBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Load saved project"
               >
                 <Text style={styles.actionBtnText}>LOAD</Text>
               </AnimatedPressable>
               <AnimatedPressable
                 onPress={handleImport}
                 style={styles.actionBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Import song from file"
               >
                 <Text style={styles.actionBtnText}>IMPORT</Text>
               </AnimatedPressable>
               <AnimatedPressable
-                onPress={() => setShowExport(true)}
+                onPress={() => {
+                  if (song && renderEngineRef.current) {
+                    exportPromiseRef.current = renderEngineRef.current.renderSongBuffers(song);
+                  }
+                  setShowExport(true);
+                }}
                 style={styles.actionBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Export song"
               >
                 <Text style={styles.actionBtnText}>EXPORT</Text>
               </AnimatedPressable>
@@ -710,6 +827,7 @@ export default function App() {
                 onVolumeChange={(v) => handleVolumeChange(ci, v)}
                 onPreview={() => handlePreviewInstrument(ci)}
                 onRegenerate={() => handleRegenSingleInstrument(ci)}
+                isRendering={renderingChannels.has(ci)}
                 adsrProgress={adsrProgressValues[ci]}
               />
             );
@@ -751,6 +869,9 @@ export default function App() {
                           styles.toggleBtn,
                           isExplicitMuted && styles.toggleBtnMuted,
                         ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${isExplicitMuted ? 'Unmute' : 'Mute'} ${name} channel`}
+                        accessibilityState={{ selected: isExplicitMuted }}
                       >
                         <Text style={[
                           styles.toggleText,
@@ -763,21 +884,29 @@ export default function App() {
                           styles.toggleBtn,
                           isSoloed && styles.toggleBtnSoloed,
                         ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${isSoloed ? 'Unsolo' : 'Solo'} ${name} channel`}
+                        accessibilityState={{ selected: isSoloed }}
                       >
                         <Text style={[
                           styles.toggleText,
                           isSoloed && styles.toggleTextSoloed,
                         ]}>S</Text>
                       </AnimatedPressable>
-                      <AnimatedPressable
-                        onPress={() => handleRegenChannel(ci)}
-                        style={[
-                          styles.regenBtn,
-                          flashChannels.has(ci) && styles.regenFlash,
-                        ]}
-                      >
-                        <Text style={styles.regenText}>R</Text>
-                      </AnimatedPressable>
+                      <PulsingView active={renderingChannels.has(ci)}>
+                        <AnimatedPressable
+                          onPress={() => handleRegenChannel(ci)}
+                          disabled={renderingChannels.has(ci)}
+                          style={[
+                            styles.regenBtn,
+                            flashChannels.has(ci) && styles.regenFlash,
+                          ]}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Regenerate ${name} channel`}
+                        >
+                          <Text style={styles.regenText}>R</Text>
+                        </AnimatedPressable>
+                      </PulsingView>
                     </View>
                   </View>
                 </View>
@@ -860,9 +989,12 @@ export default function App() {
         <ExportModal
           visible={showExport}
           song={song}
-          onClose={() => setShowExport(false)}
+          onClose={() => { setShowExport(false); exportPromiseRef.current = null; }}
+          renderPromise={exportPromiseRef.current}
         />
       )}
+
+      <UpdateBanner />
     </View>
   );
 }
@@ -899,6 +1031,9 @@ const styles = StyleSheet.create({
     color: colors.accentPrimary,
     letterSpacing: 2,
     flex: 1,
+    padding: 0,
+    margin: 0,
+    borderWidth: 0,
   },
   controls: {
     flexDirection: 'row',

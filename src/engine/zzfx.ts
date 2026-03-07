@@ -27,6 +27,46 @@ export function getAnalyser(): AnalyserNode {
 
 export const zzfxR = 44100; // sample rate
 
+// Encode stereo float arrays to a 16-bit PCM WAV blob
+export function floatsToWav(left: number[], right: number[]): Blob {
+  const len = left.length;
+  const numChannels = 2;
+  const bytesPerSample = 2;
+  const dataSize = len * numChannels * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  // WAV header
+  const writeStr = (off: number, str: string) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i));
+  };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);          // fmt chunk size
+  view.setUint16(20, 1, true);           // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, zzfxR, true);       // sample rate
+  view.setUint32(28, zzfxR * numChannels * bytesPerSample, true); // byte rate
+  view.setUint16(32, numChannels * bytesPerSample, true);         // block align
+  view.setUint16(34, bytesPerSample * 8, true);                   // bits per sample
+  writeStr(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  // Interleaved 16-bit samples
+  let offset = 44;
+  for (let i = 0; i < len; i++) {
+    const clampL = Math.max(-1, Math.min(1, left[i] || 0));
+    const clampR = Math.max(-1, Math.min(1, right[i] || 0));
+    view.setInt16(offset, clampL * 0x7FFF | 0, true);
+    view.setInt16(offset + 2, clampR * 0x7FFF | 0, true);
+    offset += 4;
+  }
+
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
 export function zzfxG(
   volume = 1,
   randomness = 0.05,
@@ -48,7 +88,7 @@ export function zzfxG(
   sustainVolume = 1,
   decay = 0,
   tremolo = 0,
-  _filter = 0
+  filter = 0
 ): number[] {
   const sampleRate = zzfxR;
   const PI2 = Math.PI * 2;
@@ -67,6 +107,19 @@ export function zzfxG(
   let i = 0;
   let s = 0;
   let f: number;
+
+  // Biquad LP/HP filter
+  const quality = 2;
+  const w = PI2 * abs(filter) * 2 / sampleRate;
+  const cos = Math.cos(w);
+  const alpha = Math.sin(w) / 2 / quality;
+  const a0 = 1 + alpha;
+  const a1 = -2 * cos / a0;
+  const a2 = (1 - alpha) / a0;
+  const b0 = (1 + sign(filter) * cos) / 2 / a0;
+  const b1 = -(sign(filter) + cos) / a0;
+  const b2 = b0;
+  let x2 = 0, x1 = 0, y2 = 0, y1 = 0;
 
   const minAttack = 9;
   attack = attack * sampleRate || minAttack;
@@ -121,6 +174,9 @@ export function zzfxG(
               2 /
               volume)
         : s;
+
+      if (filter)
+        s = y1 = b2 * x2 + b1 * (x2 = x1) + b0 * (x1 = s) - a2 * y2 - a1 * (y2 = y1);
     }
 
     f = (frequency += slide += deltaSlide) * Math.cos(modulation * modOffset++);

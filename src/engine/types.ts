@@ -6,7 +6,7 @@ export type VibeName = 'adventure' | 'battle' | 'dungeon' | 'titleScreen' | 'bos
 
 export type PatternLabel = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H';
 
-// Effect codes — NES/GB authentic per-note effects
+// Effect codes — retro-authentic per-note effects
 export type EffectCode = 'SU' | 'SD' | 'VB' | 'DT' | 'ST' | 'PD' | 'BC' | 'TR';
 
 export const EFFECT_CODES: EffectCode[] = ['SU', 'SD', 'VB', 'DT', 'ST', 'PD', 'BC', 'TR'];

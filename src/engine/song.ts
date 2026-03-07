@@ -155,6 +155,87 @@ export function generateSong(config?: Partial<SongConfig>): Song {
   };
 }
 
+/**
+ * Regenerate for a new vibe: new instruments, structure, patterns, effects, BPM.
+ * Keeps name, key, scale, length from the existing song.
+ * BPM is re-rolled from the new vibe's preferred range.
+ */
+export function regenerateForVibe(song: Song, newVibe: VibeName): Song {
+  return generateSong({
+    name: song.config.name,
+    vibe: newVibe,
+    key: song.config.key,
+    scale: song.config.scale,
+    bpm: getRandomBpm(newVibe),
+    length: song.config.length,
+  });
+}
+
+/**
+ * Regenerate all patterns in-place for a new config (key/scale change).
+ * Keeps instruments, structure (patternOrder, sequence, roles) intact.
+ */
+export function regenerateAllPatterns(
+  song: Song,
+  configOverrides: Partial<SongConfig>,
+): Song {
+  const newConfig: SongConfig = { ...song.config, ...configOverrides };
+  const patterns: Record<PatternLabel, Pattern> = {} as Record<PatternLabel, Pattern>;
+  const patternEffects: Record<PatternLabel, PatternEffects> = {} as Record<PatternLabel, PatternEffects>;
+
+  for (const label of song.patternOrder) {
+    const role = song.patternRoles[label] ?? 'verse';
+    const { pattern, effects } = generatePatternForRole(newConfig, role);
+    patterns[label] = pattern;
+    patternEffects[label] = effects;
+  }
+
+  return {
+    ...song,
+    config: newConfig,
+    patterns,
+    patternEffects,
+  };
+}
+
+/**
+ * Regenerate with a new length: picks a new structure template, generates
+ * new patterns for each role. Keeps instruments.
+ */
+export function regenerateWithNewLength(
+  song: Song,
+  newLength: SongLength,
+): Song {
+  const newConfig: SongConfig = { ...song.config, length: newLength };
+  const vibeConfig = VIBE_CONFIG[newConfig.vibe];
+  const template = pick(vibeConfig.structures[newLength]);
+
+  const patterns: Record<PatternLabel, Pattern> = {} as Record<PatternLabel, Pattern>;
+  const patternRoles: Record<PatternLabel, SectionRole> = {} as Record<PatternLabel, SectionRole>;
+  const patternEffects: Record<PatternLabel, PatternEffects> = {} as Record<PatternLabel, PatternEffects>;
+  const patternOrder: PatternLabel[] = [];
+
+  for (let i = 0; i < template.roles.length; i++) {
+    const label = PATTERN_LABELS[i];
+    const role = template.roles[i];
+    const { pattern, effects } = generatePatternForRole(newConfig, role);
+    patterns[label] = pattern;
+    patternRoles[label] = role;
+    patternEffects[label] = effects;
+    patternOrder.push(label);
+  }
+
+  return {
+    ...song,
+    config: newConfig,
+    patterns,
+    patternRoles,
+    patternEffects,
+    sequence: [...template.sequence],
+    patternOrder,
+  };
+}
+
 export function regeneratePattern(
   song: Song,
   patternLabel: PatternLabel

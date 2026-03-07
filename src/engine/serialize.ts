@@ -85,6 +85,11 @@ function songToJson(song: Song): string {
   });
 }
 
+// Minified self-contained player: zzfxG (v1.3.0 + filter), zzfxP, zzfxM (v2.0.3)
+// Source: /tmp/zzfx-player.js → terser --compress passes=2 --mangle
+// To re-minify: update /tmp/zzfx-player.js, run: npx terser zzfx-player.js --compress passes=2 --mangle
+const ZZFX_PLAYER_MIN = 'const zzfxR=44100,zzfxX=new AudioContext;function zzfxP(...t){const n=zzfxX.createBuffer(t.length,t[0].length,44100),a=zzfxX.createBufferSource();return t.map((t,a)=>n.getChannelData(a).set(t)),a.buffer=n,a.connect(zzfxX.destination),a.start(),a}function zzfxG(t=1,n=.05,a=220,e=0,f=0,o=.1,h=0,r=1,z=0,s=0,c=0,M=0,i=0,u=0,x=0,l=0,g=0,m=1,d=0,X=0,b=0){const p=2*Math.PI,B=Math.abs,C=t=>t<0?-1:1;let G,P=z*=500*p/44100/44100,w=a*=(1+2*n*Math.random()-n)*p/44100,A=0,D=0,I=0,R=1,S=[],j=0,k=0,q=0;const v=p*B(b)*2/44100,y=Math.cos(v),E=Math.sin(v)/2/2,F=1+E,H=-2*y/F,J=(1-E)/F,K=(1+C(b)*y)/2/F,L=-(C(b)+y)/F,N=K;let O=0,Q=0,T=0,U=0;s*=500*p/44100**3,x*=p/44100,c*=p/44100,M*=44100,i=44100*i|0,t*=.3;const V=(e=44100*e||9)+(d*=44100)+(f*=44100)+(o*=44100)+(g*=44100)|0;for(;k<V;S[k++]=q*t)++I%(100*l|0)||(q=h?h>1?h>2?h>3?h>4?j/p%1<r/2?1:-1:Math.sin(j**3):Math.max(Math.min(Math.tan(j),1),-1):1-(2*j/p%2+2)%2:1-4*B(Math.round(j/p)-j/p):Math.sin(j),q=(i?1-X+X*Math.sin(p*k/i):1)*(h>4?q:C(q)*B(q)**r)*(k<e?k/e:k<e+d?1-(k-e)/d*(1-m):k<e+d+f?m:k<V-g?(V-k-g)/o*m:0),q=g?q/2+(g>k?0:(k<V-g?1:(V-k)/g)*S[k-g|0]/2/t):q,b&&(q=U=N*O+L*(O=Q)+K*(Q=q)-J*T-H*(T=U))),G=(a+=z+=s)*Math.cos(x*A++),j+=G+G*u*Math.sin(k**5),R&&++R>M&&(a+=c,w+=c,R=0),!i||++D%i||(a=w,z=P,R=R||1);return S}function zzfxM(t,n,a,e){let f,o,h,r,z,s,c,M,i,u,x,l,g,m,d,X=0,b=[],p=[],B=[],C=0,G=0,P=1,w={};const A=44100/e*60>>2;for(;P;C++)b=[P=M=x=g=0],a.map((e,x)=>{for(c=n[e][C]||[0,0,0],P|=n[e][C]?1:0,d=g+(n[e][0].length-2-(M?0:1))*A,m=x==a.length-1,o=2,r=g;o<c.length+(m?1:0);M=++o){for(z=c[o],i=o==c.length+(m?1:0)-1&&m||u!=(c[0]||0)||z||0,h=0;h<A&&M;h++>A-99&&i?l+=(l<1?1:0)/99:0)s=(1-l)*b[X++]/2||0,p[r]=(p[r]||0)-s*G+s,B[r]=(B[r++]||0)+s*G+s;z&&(l=z%1,G=c[1]||0,(z|=0)&&(b=w[[u=c[X=0]||0,z]]=w[[u,z]]||(f=[...t[u]],f[2]*=2**((z-12)/12),z>0?zzfxG(...f):[])))}g=d});return[p,B]}';
+
 // Export a usable JS file — ready to drop into a game project
 // Uses EXPANDED channels so ZzFXM playback includes effects.
 // The @zzfx-studio line embeds full logical JSON for lossless re-import.
@@ -98,7 +103,11 @@ export function songToCode(song: Song): string {
   lines.push(`// @zzfx-studio ${songToJson(song)}`);
   lines.push('');
 
-  // Human-readable, usable JS (expanded channels for correct playback)
+  // Self-contained player (minified zzfxG v1.3.0 + zzfxP + zzfxM v2.0.3)
+  lines.push(ZZFX_PLAYER_MIN);
+  lines.push('');
+
+  // Human-readable song data (expanded channels for correct playback)
   lines.push('const instruments = [');
   for (const inst of expanded.instruments) {
     lines.push('  ' + fmtParams(inst) + ',');
@@ -122,6 +131,7 @@ export function songToCode(song: Song): string {
   lines.push(`const sequence = [${expanded.sequence.join(',')}];`);
   lines.push(`const BPM = ${expanded.bpm};`);
   lines.push('');
+  lines.push('// Ensure this runs after a user gesture (click/tap) — AudioContext requires interaction to start');
   lines.push('zzfxP(...zzfxM(instruments, patterns, sequence, BPM));');
 
   return lines.join('\n');
