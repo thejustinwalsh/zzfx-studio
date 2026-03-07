@@ -17,6 +17,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/zzfx-studio
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +31,11 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+        working-directory: .
+
+      - name: Build packages
+        run: pnpm -r run build
+        working-directory: .
 
       - name: Export web build
         run: npx expo export --platform web
@@ -43,7 +51,7 @@ jobs:
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: apps/zzfx-studio/dist
 
   deploy:
     needs: build

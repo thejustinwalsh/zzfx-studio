@@ -1,0 +1,61 @@
+{
+  "name": "@zzfx-studio/zzfxm",
+  "version": "0.1.0",
+  "description": "Modern ZzFXM music renderer with TypeScript support",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/zzfxm.ts",
+      "import": {
+        "types": "./dist/zzfxm.d.ts",
+        "default": "./dist/zzfxm.js"
+      },
+      "require": {
+        "types": "./dist/zzfxm.d.cts",
+        "default": "./dist/zzfxm.cjs"
+      }
+    },
+    "./micro": {
+      "source": "./src/zzfxm.ts",
+      "import": {
+        "types": "./dist/zzfxm.d.ts",
+        "default": "./dist/micro.min.js"
+      },
+      "require": {
+        "types": "./dist/zzfxm.d.cts",
+        "default": "./dist/micro.min.cjs"
+      }
+    }
+  },
+  "main": "./dist/zzfxm.cjs",
+  "module": "./dist/zzfxm.js",
+  "types": "./dist/zzfxm.d.ts",
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {
+    "zzfx": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "zzfx": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "~5.9.2",
+    "zzfx": "catalog:"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thejustinwalsh/zzfx-studio.git",
+    "directory": "packages/zzfxm"
+  }
+}
