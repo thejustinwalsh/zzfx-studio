@@ -3,10 +3,13 @@ import { View, Text, StyleSheet } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay } from 'react-native-reanimated';
 import { AnimatedPressable } from './AnimatedPressable';
 import { colors, fonts, fontSize, spacing } from '../theme';
+import { isNeu } from '../platform';
 import { useServiceWorkerUpdate, applyUpdate, dismissUpdate } from '../sw-register';
 
 export function UpdateBanner() {
   const { hasUpdate, version } = useServiceWorkerUpdate();
+
+  if (isNeu()) return null;
   const translateY = useSharedValue(60);
   const opacity = useSharedValue(0);
 

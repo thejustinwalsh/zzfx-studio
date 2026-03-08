@@ -1,0 +1,40 @@
+{
+  "name": "@zzfx-studio/platform-win32-x64",
+  "version": "0.1.0",
+  "description": "ZzFX Studio — Windows x64 binary",
+  "license": "MIT",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thejustinwalsh/zzfx-studio.git",
+    "directory": "packages/zzfx-studio/platforms/win32-x64"
+  },
+  "homepage": "https://thejustinwalsh.github.io/zzfx-studio",
+  "author": "Justin Walsh (https://github.com/thejustinwalsh)",
+  "keywords": [
+    "zzfx",
+    "zzfxm",
+    "chiptune",
+    "tracker",
+    "retro",
+    "audio",
+    "music",
+    "game-audio",
+    "synthesizer",
+    "8-bit",
+    "chip-music",
+    "game-jam",
+    "demoscene",
+    "algorithmic-music",
+    "desktop-app",
+    "npx"
+  ]
+}

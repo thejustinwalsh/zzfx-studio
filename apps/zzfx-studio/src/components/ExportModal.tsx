@@ -14,6 +14,7 @@ import { colors, fonts, fontSize, spacing } from '../theme';
 import { ZZFX } from 'zzfx';
 import { zzfxP, unlockAudio, floatsToWav } from '../engine/zzfx';
 import { songToCode, songToClipboard } from '../engine/serialize';
+import { saveTextFile, saveBinaryFile } from '../platform';
 import type { Song } from '../engine/types';
 
 type StereoBuffer = [Float32Array, Float32Array];
@@ -281,24 +282,15 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
   }, [code]);
 
   const handleDownload = useCallback(() => {
-    const blob = new Blob([code], { type: 'text/javascript' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${(song.config.name || 'zzfx-song').toLowerCase().replace(/\s+/g, '-')}.js`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const filename = `${(song.config.name || 'zzfx-song').toLowerCase().replace(/\s+/g, '-')}.js`;
+    saveTextFile(code, filename, [{ name: 'JavaScript', extensions: ['js'] }]);
   }, [code, song]);
 
   const handleDownloadWav = useCallback(() => {
     if (!rendered) return;
     const blob = floatsToWav(rendered.left as any, rendered.right as any);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${(song.config.name || 'zzfx-song').toLowerCase().replace(/\s+/g, '-')}.wav`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const filename = `${(song.config.name || 'zzfx-song').toLowerCase().replace(/\s+/g, '-')}.wav`;
+    saveBinaryFile(blob, filename, [{ name: 'WAV Audio', extensions: ['wav'] }]);
   }, [rendered, song]);
 
   const formatTime = (seconds: number) => {

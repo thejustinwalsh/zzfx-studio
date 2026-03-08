@@ -4,9 +4,13 @@
   "type": "module",
   "packageManager": "pnpm@10.28.1",
   "scripts": {
-    "build": "pnpm -r run build",
-    "dev": "pnpm --filter zzfx-studio run web",
-    "preview": "pnpm --filter zzfx-studio run preview"
+    "build": "turbo run build",
+    "dev": "pnpm --filter @zzfx-studio/app run web",
+    "preview": "pnpm --filter @zzfx-studio/app run preview",
+    "changeset": "changeset",
+    "changeset:generate": "tsx scripts/generate-changesets.ts",
+    "changeset:version": "changeset version",
+    "release": "turbo run build && changeset publish"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -16,5 +20,10 @@
     "overrides": {
       "@zzfx-studio/zzfxm": "workspace:*"
     }
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.30.0",
+    "tsx": "^4.21.0",
+    "turbo": "^2.7.5"
   }
 }

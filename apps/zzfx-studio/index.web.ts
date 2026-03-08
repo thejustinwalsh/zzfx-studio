@@ -1,8 +1,9 @@
 import { registerRootComponent } from 'expo';
 import { Platform } from 'react-native';
-import { registerServiceWorker } from './src/sw-register';
-
-registerServiceWorker();
+if (process.env.EXPO_PUBLIC_DISABLE_SW !== '1') {
+  const { registerServiceWorker } = require('./src/sw-register');
+  registerServiceWorker();
+}
 
 // Load JetBrains Mono as a web font + style scrollbars
 if (Platform.OS === 'web' && typeof document !== 'undefined') {

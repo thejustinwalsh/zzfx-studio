@@ -1,0 +1,25 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "fixed": [
+    [
+      "@zzfx-studio/app",
+      "zzfx-studio",
+      "@zzfx-studio/platform-darwin-arm64",
+      "@zzfx-studio/platform-darwin-x64",
+      "@zzfx-studio/platform-linux-x64",
+      "@zzfx-studio/platform-linux-arm64",
+      "@zzfx-studio/platform-win32-x64"
+    ]
+  ],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "privatePackages": {
+    "version": true,
+    "tag": true
+  },
+  "ignore": []
+}

@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
+import { useRef, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo } from 'react';
 import { ZZFX } from 'zzfx';
 import { useSharedValue } from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
@@ -42,6 +42,7 @@ import {
   VIBE_CONFIG,
   codeToSong,
 } from './src/engine';
+import { openTextFile } from './src/platform';
 import type { Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel } from './src/engine';
 import type { ChannelIndex } from './src/theme/colors';
 import { getPatternColor, getPatternLabelColor, getPatternActiveColor, getPatternActiveLabelColor, getPatternActiveBorderColor } from './src/utils/patternColors';
@@ -544,21 +545,21 @@ export default function App() {
   }, []);
 
   // Export / Import
-  const handleImport = useCallback(() => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.js,.txt';
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      const text = await file.text();
-      const imported = codeToSong(text);
-      if (!imported) return;
-      loadSong(imported);
-      if (audioGraphRef.current?.isPlaying) stopPlayback();
-    };
-    input.click();
+  const handleImport = useCallback(async () => {
+    const text = await openTextFile([{ name: 'Song files', extensions: ['js', 'txt'] }]);
+    if (!text) return;
+    const imported = codeToSong(text);
+    if (!imported) return;
+    loadSong(imported);
+    if (audioGraphRef.current?.isPlaying) stopPlayback();
   }, [stopPlayback]);
+
+  // Listen for app events (e.g. Neutralino menu, keyboard shortcuts)
+  const onImport = useEffectEvent(() => handleImport());
+  useEffect(() => {
+    window.addEventListener('zs-import', onImport);
+    return () => window.removeEventListener('zs-import', onImport);
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {

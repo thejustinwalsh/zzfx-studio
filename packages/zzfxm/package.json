@@ -57,5 +57,21 @@
     "type": "git",
     "url": "https://github.com/thejustinwalsh/zzfx-studio.git",
     "directory": "packages/zzfxm"
-  }
+  },
+  "homepage": "https://github.com/thejustinwalsh/zzfx-studio/tree/main/packages/zzfxm",
+  "author": "Justin Walsh (https://github.com/thejustinwalsh)",
+  "keywords": [
+    "zzfx",
+    "zzfxm",
+    "chiptune",
+    "music",
+    "audio",
+    "retro",
+    "8-bit",
+    "game-audio",
+    "synthesizer",
+    "chip-music",
+    "tracker",
+    "web-audio"
+  ]
 }

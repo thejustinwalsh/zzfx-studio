@@ -1,0 +1,4 @@
+resources/
+dist/
+bin/neutralino-*
+bin/neutralino.exe
