@@ -1,6 +1,6 @@
 {
   "name": "@zzfx-studio/zzfxm",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Modern ZzFXM music renderer with TypeScript support",
   "license": "MIT",
   "type": "module",
@@ -49,6 +49,7 @@
     }
   },
   "devDependencies": {
+    "terser": "^5.46.0",
     "tsup": "^8.0.0",
     "typescript": "~5.9.2",
     "zzfx": "catalog:"

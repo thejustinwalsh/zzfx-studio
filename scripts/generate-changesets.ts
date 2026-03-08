@@ -63,7 +63,8 @@ const SKIP_TYPES = new Set(['docs', 'test', 'ci', 'chore', 'style', 'build'])
 
 function branchId(base: string): string {
   try {
-    const output = execSync(`git log --format="%ct" --reverse ${base}..HEAD`, {
+    const range = base === '--root' ? '--all' : `${base}..HEAD`
+    const output = execSync(`git log --format="%ct" --reverse ${range}`, {
       cwd: ROOT,
       encoding: 'utf-8',
     }).trim()
@@ -81,7 +82,7 @@ function branchId(base: string): string {
 function discoverPackages(): Map<string, string> {
   const mapping = new Map<string, string>()
 
-  for (const dir of ['packages', 'apps']) {
+  for (const dir of ['packages', 'apps', 'packages/zzfx-studio/platforms']) {
     const absDir = join(ROOT, dir)
     if (!existsSync(absDir)) continue
 
@@ -107,7 +108,8 @@ function discoverPackages(): Map<string, string> {
 
 function getCommitRange(base: string): string[] {
   try {
-    const output = execSync(`git log --format="%H" ${base}..HEAD`, {
+    const range = base === '--root' ? '--all' : `${base}..HEAD`
+    const output = execSync(`git log --format="%H" ${range}`, {
       cwd: ROOT,
       encoding: 'utf-8',
     }).trim()

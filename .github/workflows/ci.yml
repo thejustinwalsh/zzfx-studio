@@ -7,6 +7,7 @@ on:
       - '.changeset/**'
       - '.claude/**'
       - 'docs/**'
+      - 'planning/**'
       - 'scripts/**'
       - '**/*.md'
       - 'LICENSE'
@@ -34,7 +35,7 @@ jobs:
           changed=$(git diff --name-only HEAD~1 HEAD)
           echo "Changed files in latest commit:"
           echo "$changed"
-          if echo "$changed" | grep -qvE '^(\.changeset/|\.claude/|docs/|scripts/|.*\.md$|LICENSE$)'; then
+          if echo "$changed" | grep -qvE '^(\.changeset/|\.claude/|docs/|planning/|scripts/|.*\.md$|LICENSE$)'; then
             echo "has_code=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_code=false" >> "$GITHUB_OUTPUT"

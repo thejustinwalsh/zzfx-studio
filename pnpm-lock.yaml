@@ -102,6 +102,9 @@ importers:
       '@neutralinojs/neu':
         specifier: ^11.7.0
         version: 11.7.0
+      '@zzfx-studio/app':
+        specifier: workspace:*
+        version: link:../../apps/zzfx-studio
     optionalDependencies:
       '@zzfx-studio/platform-darwin-arm64':
         specifier: workspace:*
@@ -131,6 +134,9 @@ importers:
 
   packages/zzfxm:
     devDependencies:
+      terser:
+        specifier: ^5.46.0
+        version: 5.46.0
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(postcss@8.4.49)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)

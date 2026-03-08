@@ -1,6 +1,6 @@
 {
   "name": "zzfx-studio",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Algorithmic chiptune tracker — generate 4-channel retro songs instantly",
   "license": "MIT",
   "type": "module",
@@ -15,7 +15,8 @@
     "clean": "rm -rf resources dist bin/neutralino-* bin/neutralino.exe platforms/*/bin platforms/*/resources.neu"
   },
   "devDependencies": {
-    "@neutralinojs/neu": "^11.7.0"
+    "@neutralinojs/neu": "^11.7.0",
+    "@zzfx-studio/app": "workspace:*"
   },
   "optionalDependencies": {
     "@zzfx-studio/platform-darwin-arm64": "workspace:*",
