@@ -192,6 +192,11 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
 
   const code = useMemo(() => {
     if (!visible) return '';
+    return songToCode(song, { includeMetadata: false });
+  }, [visible, song]);
+
+  const fileCode = useMemo(() => {
+    if (!visible) return '';
     return songToCode(song);
   }, [visible, song]);
 
@@ -283,8 +288,8 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
 
   const handleDownload = useCallback(() => {
     const filename = `${(song.config.name || 'zzfx-song').toLowerCase().replace(/\s+/g, '-')}.js`;
-    saveTextFile(code, filename, [{ name: 'JavaScript', extensions: ['js'] }]);
-  }, [code, song]);
+    saveTextFile(fileCode, filename, [{ name: 'JavaScript', extensions: ['js'] }]);
+  }, [fileCode, song]);
 
   const handleDownloadWav = useCallback(() => {
     if (!rendered) return;
@@ -402,16 +407,16 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
               <Text style={styles.actionBtnText}>COPY CODE</Text>
             </AnimatedPressable>
             <AnimatedPressable onPress={handleDownload} style={styles.actionBtn} accessibilityRole="button" accessibilityLabel="Download as JavaScript file">
-              <Text style={styles.actionBtnText}>DOWNLOAD .JS</Text>
+              <Text style={styles.actionBtnText}>EXPORT JS</Text>
             </AnimatedPressable>
             <AnimatedPressable
               onPress={handleDownloadWav}
               disabled={isRendering}
               style={[styles.actionBtn, isRendering && styles.btnDisabled]}
               accessibilityRole="button"
-              accessibilityLabel="Download as WAV audio file"
+              accessibilityLabel="Export as WAV audio file"
             >
-              <Text style={[styles.actionBtnText, isRendering && styles.btnDisabledText]}>DOWNLOAD .WAV</Text>
+              <Text style={[styles.actionBtnText, isRendering && styles.btnDisabledText]}>EXPORT WAV</Text>
             </AnimatedPressable>
           </View>
 
