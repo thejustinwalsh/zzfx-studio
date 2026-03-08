@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.28.1",
   "scripts": {
     "build": "turbo run build",
-    "dev": "pnpm --filter @zzfx-studio/app run web",
+    "dev": "turbo run web --filter @zzfx-studio/app --ui tui",
     "preview": "pnpm --filter @zzfx-studio/app run preview",
     "changeset": "changeset",
     "changeset:generate": "tsx scripts/generate-changesets.ts",
