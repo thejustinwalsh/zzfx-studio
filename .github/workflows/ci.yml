@@ -102,3 +102,5 @@ jobs:
 
       - name: Build
         run: pnpm build
+        env:
+          TURBO_TELEMETRY_DISABLED: 1
