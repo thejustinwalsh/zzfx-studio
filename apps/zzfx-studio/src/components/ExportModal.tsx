@@ -233,13 +233,8 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
     if (!rendered) return;
 
     unlockAudio();
-    // Validate the SHIPPED library against the SHIPPED data shape.
-    // Run patterns through the same row-count-preserving trim that
-    // `Copy Code` / `Copy Oneliner` apply (see serialize.ts) so this
-    // preview reproduces exactly what a downstream consumer hears
-    // after pasting the exported code into their project. Instruments
-    // get their normal trailing-zero trim (ZzFX positional defaults
-    // handle missing trailing params safely).
+    // Dog-food the export: trim the same way Copy Code does, then play
+    // through the shipped ZZFXM.build.
     const expanded = songToZzfxm(song);
     const trimInstrument = (arr: number[]): number[] => {
       let last = arr.length - 1;

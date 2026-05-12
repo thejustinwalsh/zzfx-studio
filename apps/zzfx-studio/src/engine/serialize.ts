@@ -15,27 +15,9 @@ function fmtParamsCompact(arr: number[]): string {
   return '[' + arr.slice(0, last + 1).map(v => v == null ? '' : +v.toFixed(4)).join(',') + ']';
 }
 
-/**
- * Trim trailing zeros from every channel in a pattern, but guarantee
- * that the LONGEST trimmed channel preserves the pattern's canonical
- * length (the max channel length BEFORE any trim — i.e., the row
- * count + 2 header slots that the in-memory representation uses).
- *
- * Per-channel trimZeros is a compression technique — a 32-row channel
- * that ends in 15 rests doesn't need 15 trailing commas in the output.
- * But if every channel in a pattern happens to land on a zero in the
- * canonical final row (e.g. breakdowns with sustained drones), all
- * channels get trimmed below canonical and the consumer can't recover
- * the row count from the serialized form alone. ZZFXM.build keys its
- * pattern boundary advancement off max-channel-length per pattern;
- * an undercount means the pattern plays one row short and the song's
- * loop boundary phase-shifts on every wrap — audible as a ghost note.
- *
- * Cheapest fix: after trimming, if the longest channel falls below
- * canonical, pad it back to canonical. Costs at most (canonical -
- * trimmedMax) extra zeros per pattern. Every other channel keeps
- * its full trim.
- */
+/** Trim trailing zeros per channel, but pad the longest channel back
+ * to canonical length so the row count survives. ZZFXM.build keys
+ * pattern boundary advancement off max-channel-length per pattern. */
 export function trimChannelsPreservingRowCount(channels: number[][]): number[][] {
   if (channels.length === 0) return channels;
   const canonicalLen = channels.reduce((m, c) => Math.max(m, c.length), 0);
