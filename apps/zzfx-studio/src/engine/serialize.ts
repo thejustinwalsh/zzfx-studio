@@ -15,10 +15,38 @@ function fmtParamsCompact(arr: number[]): string {
   return '[' + arr.slice(0, last + 1).map(v => v == null ? '' : +v.toFixed(4)).join(',') + ']';
 }
 
-function fmtChannel(ch: number[]): string {
-  let last = ch.length - 1;
-  while (last > 1 && ch[last] === 0) last--;
-  return '[' + ch.slice(0, last + 1).join(',') + ']';
+/**
+ * Trim trailing zeros from every channel in a pattern, but guarantee
+ * that the LONGEST trimmed channel preserves the pattern's canonical
+ * length (the max channel length BEFORE any trim — i.e., the row
+ * count + 2 header slots that the in-memory representation uses).
+ *
+ * Per-channel trimZeros is a compression technique — a 32-row channel
+ * that ends in 15 rests doesn't need 15 trailing commas in the output.
+ * But if every channel in a pattern happens to land on a zero in the
+ * canonical final row (e.g. breakdowns with sustained drones), all
+ * channels get trimmed below canonical and the consumer can't recover
+ * the row count from the serialized form alone. ZZFXM.build keys its
+ * pattern boundary advancement off max-channel-length per pattern;
+ * an undercount means the pattern plays one row short and the song's
+ * loop boundary phase-shifts on every wrap — audible as a ghost note.
+ *
+ * Cheapest fix: after trimming, if the longest channel falls below
+ * canonical, pad it back to canonical. Costs at most (canonical -
+ * trimmedMax) extra zeros per pattern. Every other channel keeps
+ * its full trim.
+ */
+export function trimChannelsPreservingRowCount(channels: number[][]): number[][] {
+  if (channels.length === 0) return channels;
+  const canonicalLen = channels.reduce((m, c) => Math.max(m, c.length), 0);
+  const trimmed = channels.map(trimZeros);
+  const trimmedMax = trimmed.reduce((m, c) => Math.max(m, c.length), 0);
+  if (trimmedMax >= canonicalLen) return trimmed;
+  const targetIdx = trimmed.findIndex(c => c.length === trimmedMax);
+  if (targetIdx < 0) return trimmed;
+  const target = trimmed[targetIdx];
+  trimmed[targetIdx] = [...target, ...Array(canonicalLen - target.length).fill(0)];
+  return trimmed;
 }
 
 // Logical 4-channel arrays (for JSON embed / re-import)
@@ -72,7 +100,7 @@ function songToJson(song: Song): string {
       song.patternOrder.map(l => [l, song.patternRoles[l]])
     ),
     instruments: instruments.map(trimZeros),
-    patterns: patterns.map(pat => pat.map(trimZeros)),
+    patterns: patterns.map(trimChannelsPreservingRowCount),
     sequence,
     patternEffects: song.patternOrder.map(l => {
       const fx = song.patternEffects?.[l];
@@ -121,8 +149,8 @@ export function songToCode(song: Song, { includeMetadata = true }: { includeMeta
     const label = song.patternOrder[pi];
     const role = song.patternRoles[label];
     lines.push(`  [ // ${label} (${role})`);
-    for (const ch of expanded.patterns[pi]) {
-      lines.push('    ' + fmtChannel(ch) + ',');
+    for (const ch of trimChannelsPreservingRowCount(expanded.patterns[pi])) {
+      lines.push('    [' + ch.join(',') + '],');
     }
     lines.push('  ],');
   }
@@ -144,7 +172,9 @@ export function songToClipboard(song: Song): string {
 
   const instStr = '[' + expanded.instruments.map(i => fmtParamsCompact(i)).join(',') + ']';
   const patStr = '[' + expanded.patterns.map(pat =>
-    '[' + pat.map(ch => fmtChannel(ch)).join(',') + ']'
+    '[' + trimChannelsPreservingRowCount(pat)
+      .map(ch => '[' + ch.join(',') + ']')
+      .join(',') + ']'
   ).join(',') + ']';
   const seqStr = '[' + expanded.sequence.join(',') + ']';
 
