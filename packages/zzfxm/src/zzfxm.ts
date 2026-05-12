@@ -37,85 +37,88 @@ export const ZZFXM = {
     sequence: number[],
     BPM = 125
   ): [number[], number[]] {
-    let instrumentParameters: number[];
-    let i: number;
-    let j: number;
-    let k: number;
-    let note: number;
-    let sample: number;
-    let patternChannel: number[];
-    let notFirstBeat: number;
-    let stop: number | boolean;
-    let instrument: number;
-    let pitch: number;
-    let attenuation: number;
-    let outSampleOffset: number;
-    let isSequenceEnd: boolean;
-    let sampleOffset = 0;
-    let nextSampleOffset: number;
-    let sampleBuffer: number[] = [];
-    let leftChannelBuffer: number[] = [];
-    let rightChannelBuffer: number[] = [];
-    let channelIndex = 0;
-    let panning = 0;
-    let hasMore = 1;
-    let sampleCache: Record<string, number[]> = {};
-    let beatLength = ZZFX.sampleRate / BPM * 60 >> 2;
+    const beatLength = (ZZFX.sampleRate / BPM * 60) >> 2;
 
-    for (; hasMore; channelIndex++) {
-      sampleBuffer = [(hasMore = notFirstBeat = pitch = outSampleOffset = 0)];
+    let channelCount = 0;
+    for (const pat of patterns) {
+      if (pat.length > channelCount) channelCount = pat.length;
+    }
+    if (channelCount === 0 || sequence.length === 0) return [[], []];
 
-      sequence.map((patternIndex: number, sequenceIndex: number) => {
-        patternChannel = patterns[patternIndex][channelIndex] || [0, 0, 0];
-        hasMore |= patterns[patternIndex][channelIndex] ? 1 : 0;
-        nextSampleOffset =
+    let totalSteps = 0;
+    for (const patternIndex of sequence) {
+      const pattern = patterns[patternIndex];
+      totalSteps += (pattern?.[0]?.length ?? 2) - 2;
+    }
+    const totalSamples = totalSteps * beatLength;
+    if (totalSamples <= 0) return [[], []];
+
+    const leftChannelBuffer: number[] = new Array(totalSamples).fill(0);
+    const rightChannelBuffer: number[] = new Array(totalSamples).fill(0);
+    const sampleCache: Record<string, number[]> = {};
+
+    for (let channelIndex = 0; channelIndex < channelCount; channelIndex++) {
+      let sampleBuffer: number[] = [];
+      let sampleOffset = 0;
+      let notFirstBeat = 0;
+      let instrument = 0;
+      let panning = 0;
+      let attenuation = 0;
+      let outSampleOffset = 0;
+
+      sequence.forEach((patternIndex: number, sequenceIndex: number) => {
+        const patternChannel = patterns[patternIndex]?.[channelIndex] || [0, 0, 0];
+        const nextSampleOffset =
           outSampleOffset +
-          (patterns[patternIndex][0].length - 2 - (notFirstBeat ? 0 : 1)) *
+          ((patterns[patternIndex]?.[0]?.length ?? 2) - 2 - (notFirstBeat ? 0 : 1)) *
             beatLength;
 
-        isSequenceEnd = sequenceIndex == sequence.length - 1;
+        const isSequenceEnd = sequenceIndex === sequence.length - 1;
+        let k = outSampleOffset;
+
         for (
-          i = 2, k = outSampleOffset;
+          let i = 2;
           i < patternChannel.length + (isSequenceEnd ? 1 : 0);
           notFirstBeat = ++i
         ) {
-          note = patternChannel[i];
+          const note = patternChannel[i];
 
-          stop =
-            (i == patternChannel.length + (isSequenceEnd ? 1 : 0) - 1 &&
+          const stop =
+            (i === patternChannel.length + (isSequenceEnd ? 1 : 0) - 1 &&
               isSequenceEnd) ||
-            instrument != (patternChannel[0] || 0) ||
+            instrument !== (patternChannel[0] || 0) ||
             note ||
             0;
 
           for (
-            j = 0;
+            let j = 0;
             j < beatLength && notFirstBeat;
             j++ > beatLength - 99 && stop
               ? (attenuation += (attenuation < 1 ? 1 : 0) / 99)
               : 0
           ) {
-            sample = ((1 - attenuation) * sampleBuffer[sampleOffset++]) / 2 || 0;
-            leftChannelBuffer[k] =
-              (leftChannelBuffer[k] || 0) - sample * panning + sample;
-            rightChannelBuffer[k] =
-              (rightChannelBuffer[k++] || 0) + sample * panning + sample;
+            const sample = ((1 - attenuation) * (sampleBuffer[sampleOffset++] ?? 0)) / 2 || 0;
+            leftChannelBuffer[k] = leftChannelBuffer[k] - sample * panning + sample;
+            rightChannelBuffer[k] = rightChannelBuffer[k++] + sample * panning + sample;
           }
 
           if (note) {
             attenuation = note % 1;
             panning = patternChannel[1] || 0;
-            if ((note |= 0)) {
-              sampleBuffer = sampleCache[
-                [
-                  (instrument = patternChannel[(sampleOffset = 0)] || 0),
-                  note,
-                ].toString()
-              ] = sampleCache[[instrument, note].toString()] || (
-                (instrumentParameters = [...instruments[instrument]]),
-                (instrumentParameters[2] *= 2 ** ((note - 12) / 12)),
-                note > 0 ? ZZFX.buildSamples(...instrumentParameters) : []
-              );
+            const noteInt = note | 0;
+            if (noteInt) {
+              sampleOffset = 0;
+              instrument = patternChannel[0] || 0;
+              const cacheKey = `${instrument}|${noteInt}`;
+              if (!sampleCache[cacheKey]) {
+                const instrumentParameters = [...(instruments[instrument] ?? [])];
+                if (instrumentParameters[2] !== undefined) {
+                  instrumentParameters[2] *= 2 ** ((noteInt - 12) / 12);
+                }
+                sampleCache[cacheKey] =
+                  noteInt > 0 ? ZZFX.buildSamples(...instrumentParameters) : [];
+              }
+              sampleBuffer = sampleCache[cacheKey]!;
             }
           }
         }
