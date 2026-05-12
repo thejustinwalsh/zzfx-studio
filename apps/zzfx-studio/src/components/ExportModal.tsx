@@ -12,8 +12,10 @@ import Animated, {
 import { AnimatedPressable } from './AnimatedPressable';
 import { colors, fonts, fontSize, spacing } from '../theme';
 import { ZZFX } from 'zzfx';
+import { ZZFXM } from '@zzfx-studio/zzfxm';
 import { zzfxP, unlockAudio, floatsToWav } from '../engine/zzfx';
 import { songToCode, songToClipboard } from '../engine/serialize';
+import { songToZzfxm } from '../engine/song';
 import { saveTextFile, saveBinaryFile } from '../platform';
 import type { Song } from '../engine/types';
 
@@ -231,11 +233,21 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
     if (!rendered) return;
 
     unlockAudio();
-    const source = zzfxP([rendered.left as any, rendered.right as any]);
+    // Validate the SHIPPED library: synthesize via @zzfx-studio/zzfxm's
+    // `ZZFXM.build` (the same function consumers of the package call)
+    // and play THAT, instead of the worker-rendered per-channel mix
+    // shown in the waveform above. If the export dialog's "PLAY ZZFXM"
+    // sounds wrong, the bug is in the published package, not in the
+    // studio app's in-house renderer. After the library fix the two
+    // paths should be audibly identical.
+    const { instruments, patterns, sequence, bpm } = songToZzfxm(song);
+    const [left, right] = ZZFXM.build(instruments, patterns, sequence, bpm);
+    if (!left || left.length === 0) return;
+    const source = zzfxP([left, right]);
     if (!source) return;
 
     sourceRef.current = source;
-    durationRef.current = rendered.left.length / ZZFX.sampleRate;
+    durationRef.current = left.length / ZZFX.sampleRate;
     setIsPlaying(true);
 
     const ctx = source.context as AudioContext;
