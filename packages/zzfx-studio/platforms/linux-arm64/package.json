@@ -1,6 +1,6 @@
 {
   "name": "@zzfx-studio/platform-linux-arm64",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "ZzFX Studio — Linux ARM64 binary",
   "license": "MIT",
   "os": [

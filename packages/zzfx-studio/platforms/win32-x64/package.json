@@ -1,6 +1,6 @@
 {
   "name": "@zzfx-studio/platform-win32-x64",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "ZzFX Studio — Windows x64 binary",
   "license": "MIT",
   "os": [

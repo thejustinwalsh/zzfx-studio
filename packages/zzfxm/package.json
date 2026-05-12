@@ -1,6 +1,6 @@
 {
   "name": "@zzfx-studio/zzfxm",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Modern ZzFXM music renderer with TypeScript support",
   "license": "MIT",
   "type": "module",
