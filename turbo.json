@@ -23,6 +23,10 @@
       "cache": false,
       "persistent": true
     },
+    "test": {
+      "dependsOn": ["build", "^build"],
+      "outputs": []
+    },
     "@zzfx-studio/app#web": {
       "dependsOn": ["^build"],
       "cache": false,

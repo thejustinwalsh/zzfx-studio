@@ -38,7 +38,8 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "node --test test/*.test.mjs"
   },
   "peerDependencies": {
     "zzfx": "catalog:"

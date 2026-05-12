@@ -30,38 +30,7 @@ export function zzfxm(
 export const ZZFXM = {
   get sampleRate() { return ZZFX.sampleRate; },
 
-  /**
-   * Render a song to stereo sample data.
-   *
-   * Algorithm is the original Keith Clark / Frank Force ZzFXM beat
-   * synthesizer, with two corrections from the canonical upstream:
-   *
-   *   1. **Per-channel state isolation.** Upstream declared
-   *      `instrument`, `attenuation`, `panning`, `sampleBuffer`,
-   *      `sampleOffset`, `notFirstBeat`, `pitch`, and `outSampleOffset`
-   *      at function scope and only reassigned them conditionally
-   *      inside the inner loop. The outer
-   *      `for (; hasMore; channelIndex++)` then leaked those values
-   *      across channel iterations, so the first note of channel N+1
-   *      inherited channel N's last instrument, envelope position,
-   *      pan, etc. — producing audible artifacts at the first beat
-   *      of every non-zero channel and at every pattern loop boundary.
-   *      Here, all per-channel state lives inside the channel loop
-   *      body and starts fresh each iteration.
-   *
-   *   2. **Pre-allocated, deterministic-length buffers.** Upstream
-   *      grew `leftChannelBuffer` / `rightChannelBuffer` dynamically
-   *      via sparse indexed writes (`arr[k] = (arr[k] || 0) + ...`),
-   *      which produced a buffer whose length depended on whichever
-   *      channel iteration wrote furthest. Here, total length is
-   *      computed up front as the sum of pattern-step counts across
-   *      the sequence, multiplied by beatLength. Both buffers are
-   *      zero-filled, so the loop boundary is sample-accurate and
-   *      `source.loop = true` doesn't desync.
-   *
-   * The DSP math (waveform write, attenuation envelope, panning,
-   * sample cache, instrument transposition) is unchanged.
-   */
+  /** Render a song to stereo sample data */
   build(
     instruments: Instrument[],
     patterns: Pattern[],
@@ -70,21 +39,12 @@ export const ZZFXM = {
   ): [number[], number[]] {
     const beatLength = (ZZFX.sampleRate / BPM * 60) >> 2;
 
-    // Channel count = widest pattern. Upstream's `for (; hasMore; ...)`
-    // walked channels until none had data; equivalent to stopping at
-    // the max channel index any pattern uses, which we compute once.
     let channelCount = 0;
     for (const pat of patterns) {
       if (pat.length > channelCount) channelCount = pat.length;
     }
     if (channelCount === 0 || sequence.length === 0) return [[], []];
 
-    // Total song length = sum of (pattern.steps × beatLength) across
-    // the sequence. The first pattern's first beat is skipped by the
-    // `notFirstBeat` guard (-1 beatLength); the last pattern gets a
-    // trailing tail from the `isSequenceEnd ? 1 : 0` loop extension
-    // (+1 beatLength). The two adjustments cancel exactly, so the
-    // total reduces to a clean sum of pattern step counts.
     let totalSteps = 0;
     for (const patternIndex of sequence) {
       const pattern = patterns[patternIndex];
@@ -93,24 +53,11 @@ export const ZZFXM = {
     const totalSamples = totalSteps * beatLength;
     if (totalSamples <= 0) return [[], []];
 
-    // Pre-allocated mixed stereo buffers — same `[left, right]` return
-    // shape as upstream. Per-channel passes accumulate into the same
-    // pair (the channel mix), but each channel's STATE is isolated
-    // below so the accumulation is correct.
     const leftChannelBuffer: number[] = new Array(totalSamples).fill(0);
     const rightChannelBuffer: number[] = new Array(totalSamples).fill(0);
-
-    // Sample cache memoizes synthesized waveforms by [instrument, note].
-    // Shared across channels intentionally — same instrument playing
-    // the same note resolves to the same waveform regardless of which
-    // channel triggered it.
     const sampleCache: Record<string, number[]> = {};
 
     for (let channelIndex = 0; channelIndex < channelCount; channelIndex++) {
-      // PER-CHANNEL STATE — declared inside the loop so every channel
-      // starts with `notFirstBeat = 0`, fresh attenuation envelope,
-      // zeroed instrument/panning, empty sample buffer. This is the
-      // primary fix vs upstream's shared state.
       let sampleBuffer: number[] = [];
       let sampleOffset = 0;
       let notFirstBeat = 0;
