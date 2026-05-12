@@ -1,19 +1,6 @@
-/**
- * Serialization roundtrip — verifies that trimming channels (the Copy Code
- * compression step) doesn't change the audio output.
- *
- * Pipeline:
- *   uniform-data → ZZFXM.build(uniform) → audio_A
- *   uniform-data → trim → ZZFXM.build(trimmed) → audio_B
- *   uniform-data → trim+pad-canonical → ZZFXM.build(padded) → audio_C
- *   uniform-data → zzfxMChannels(uniform) → mix → audio_REF (DAW ground truth)
- *
- * audio_A vs audio_REF: engine equivalence (already proven elsewhere).
- * audio_B vs audio_REF: tests whether per-channel trim alone breaks things.
- * audio_C vs audio_REF: tests whether trim + row-count-preservation fixes it.
- *
- * Whichever pair diverges identifies the bug source.
- */
+/** Serialization roundtrip — uniform input rendered both directly
+ * (PATH A) and through the row-count-preserving trim helper (PATH C)
+ * must be byte-identical to the DAW reference renderer. */
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -100,11 +87,6 @@ const refL = refMix[0]
 const pathA = ZZFXM.build(instruments, patterns, sequence, BPM)
 const aL = pathA[0]
 
-// PATH B — ZZFXM.build on per-channel trimmed (Copy Code-style) data
-const trimmedB = patterns.map(pat => pat.map(trimZeros))
-const pathB = ZZFXM.build(instruments, trimmedB, sequence, BPM)
-const bL = pathB[0]
-
 // PATH C — ZZFXM.build on trim + row-count-preserving pad (new serializer)
 const trimmedC = patterns.map(trimChannelsPreservingRowCount)
 const pathC = ZZFXM.build(instruments, trimmedC, sequence, BPM)
@@ -112,9 +94,7 @@ const cL = pathC[0]
 
 console.log(`  REF length:                  ${refL.length}`)
 console.log(`  PATH A (no trim) length:     ${aL.length}  diff vs REF: ${firstDiff(refL, aL)?.kind ?? 'IDENTICAL'}  rms=${rms(refL, aL).toExponential(2)}`)
-console.log(`  PATH B (naive trim) length:  ${bL.length}  diff vs REF: ${firstDiff(refL, bL)?.kind ?? 'IDENTICAL'}  rms=${rms(refL, bL).toExponential(2)}`)
 console.log(`  PATH C (preserving trim):    ${cL.length}  diff vs REF: ${firstDiff(refL, cL)?.kind ?? 'IDENTICAL'}  rms=${rms(refL, cL).toExponential(2)}`)
-console.log(`  Trimmed B channel shapes:`, trimmedB.map(pat => pat.map(c => c.length)))
 console.log(`  Trimmed C channel shapes:`, trimmedC.map(pat => pat.map(c => c.length)))
 
 test('PATH A (no trim) is byte-identical to DAW reference', () => {
@@ -123,11 +103,4 @@ test('PATH A (no trim) is byte-identical to DAW reference', () => {
 
 test('PATH C (row-count-preserving trim) is byte-identical to DAW reference', () => {
     assert.equal(firstDiff(refL, cL), null, 'trim+pad still introduces divergence')
-})
-
-test('PATH B (naive trim) demonstrates the bug', () => {
-    // Document the failing path — this SHOULD diverge from REF, confirming
-    // why the current consumer experience differs from the DAW.
-    const diff = firstDiff(refL, bL)
-    console.log('  PATH B divergence (expected to fail):', diff)
 })
