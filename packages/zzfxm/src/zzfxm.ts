@@ -79,24 +79,28 @@ export const ZZFXM = {
 
       sequence.forEach((patternIndex: number, sequenceIndex: number) => {
         const patternChannel = patterns[patternIndex]?.[channelIndex] || [0, 0, 0];
+        const canonicalLen = patternMaxLens[patternIndex] ?? 2;
         const nextSampleOffset =
           outSampleOffset +
-          ((patternMaxLens[patternIndex] ?? 2) - 2 - (notFirstBeat ? 0 : 1)) *
-            beatLength;
+          (canonicalLen - 2 - (notFirstBeat ? 0 : 1)) * beatLength;
 
         const isSequenceEnd = sequenceIndex === sequence.length - 1;
         let k = outSampleOffset;
 
+        // Inner loop iterates the PATTERN's canonical row count, not
+        // the current channel's length. Trimmed-trailing-zeros channels
+        // still get their rest rows walked, so any active note's
+        // release tail keeps writing across rows it would have written
+        // in the un-trimmed source. Matches DAW-side renderer behavior.
         for (
           let i = 2;
-          i < patternChannel.length + (isSequenceEnd ? 1 : 0);
+          i < canonicalLen + (isSequenceEnd ? 1 : 0);
           notFirstBeat = ++i
         ) {
           const note = patternChannel[i];
 
           const stop =
-            (i === patternChannel.length + (isSequenceEnd ? 1 : 0) - 1 &&
-              isSequenceEnd) ||
+            (i === canonicalLen + (isSequenceEnd ? 1 : 0) - 1 && isSequenceEnd) ||
             instrument !== (patternChannel[0] || 0) ||
             note ||
             0;
