@@ -1,6 +1,6 @@
 {
   "name": "zzfx-studio",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Algorithmic chiptune tracker — generate 4-channel retro songs instantly",
   "license": "MIT",
   "type": "module",
