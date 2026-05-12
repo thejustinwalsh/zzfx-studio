@@ -233,15 +233,27 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
     if (!rendered) return;
 
     unlockAudio();
-    // Validate the SHIPPED library: synthesize via @zzfx-studio/zzfxm's
-    // `ZZFXM.build` (the same function consumers of the package call)
-    // and play THAT, instead of the worker-rendered per-channel mix
-    // shown in the waveform above. If the export dialog's "PLAY ZZFXM"
-    // sounds wrong, the bug is in the published package, not in the
-    // studio app's in-house renderer. After the library fix the two
-    // paths should be audibly identical.
-    const { instruments, patterns, sequence, bpm } = songToZzfxm(song);
-    const [left, right] = ZZFXM.build(instruments, patterns, sequence, bpm);
+    // Validate the SHIPPED library against the SHIPPED data shape:
+    // synthesize via @zzfx-studio/zzfxm's `ZZFXM.build` (the same
+    // function consumers of the package call) with channels trimmed
+    // the same way `Copy Code` / `Copy Oneliner` output trims them.
+    // If the export dialog's PLAY ZZFXM button sounds wrong, the bug
+    // is reachable by downstream consumers who paste the exported
+    // code into their project — that's the contract we're validating.
+    const expanded = songToZzfxm(song);
+    const trimZeros = (arr: number[]): number[] => {
+      let last = arr.length - 1;
+      while (last > 0 && (arr[last] === 0 || arr[last] === undefined)) last--;
+      return arr.slice(0, last + 1);
+    };
+    const trimmedInstruments = expanded.instruments.map(trimZeros);
+    const trimmedPatterns = expanded.patterns.map(pat => pat.map(trimZeros));
+    const [left, right] = ZZFXM.build(
+      trimmedInstruments,
+      trimmedPatterns,
+      expanded.sequence,
+      expanded.bpm,
+    );
     if (!left || left.length === 0) return;
     const source = zzfxP([left, right]);
     if (!source) return;

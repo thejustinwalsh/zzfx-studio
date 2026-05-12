@@ -45,10 +45,21 @@ export const ZZFXM = {
     }
     if (channelCount === 0 || sequence.length === 0) return [[], []];
 
+    // Pattern length = MAX channel length, not channel-0 length. Authoring
+    // tools that trim trailing zeros per channel for compact storage can
+    // leave channel 0 shorter than its siblings; using channel 0's length
+    // for the pattern boundary makes longer sibling channels overshoot,
+    // which silently mixes adjacent patterns' edges together. With max-
+    // channel-length, no channel can overshoot its allotted pattern span.
+    const patternMaxLens: number[] = patterns.map((pat) => {
+      let m = 0;
+      for (const ch of pat) if (ch && ch.length > m) m = ch.length;
+      return m;
+    });
+
     let totalSteps = 0;
     for (const patternIndex of sequence) {
-      const pattern = patterns[patternIndex];
-      totalSteps += (pattern?.[0]?.length ?? 2) - 2;
+      totalSteps += (patternMaxLens[patternIndex] ?? 2) - 2;
     }
     const totalSamples = totalSteps * beatLength;
     if (totalSamples <= 0) return [[], []];
@@ -70,7 +81,7 @@ export const ZZFXM = {
         const patternChannel = patterns[patternIndex]?.[channelIndex] || [0, 0, 0];
         const nextSampleOffset =
           outSampleOffset +
-          ((patterns[patternIndex]?.[0]?.length ?? 2) - 2 - (notFirstBeat ? 0 : 1)) *
+          ((patternMaxLens[patternIndex] ?? 2) - 2 - (notFirstBeat ? 0 : 1)) *
             beatLength;
 
         const isSequenceEnd = sequenceIndex === sequence.length - 1;

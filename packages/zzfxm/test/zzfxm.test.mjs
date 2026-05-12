@@ -177,6 +177,60 @@ test('per-channel state isolation: micro build also has channel-order independen
     assert.ok(arraysEqual(forwardR, reverseR), 'micro right: channel order is irrelevant')
 })
 
+test('mixed channel lengths within a pattern — looped buffer has no overshoot ghost', () => {
+    // REGRESSION TEST for the trimmed-channel overshoot bug.
+    //
+    // Authoring tools like zzfx-studio strip trailing zeros from each
+    // channel for compact serialization. If channel 0 happens to end
+    // with rests, it gets trimmed shorter than its siblings. A naive
+    // pattern-boundary policy keyed to channel 0's length would let
+    // longer sibling channels overshoot their allotted step count;
+    // those overshoot writes overlap the NEXT pattern's contribution
+    // at the same channel, audible as a doubled note at every pattern
+    // boundary when source.loop = true.
+    //
+    // The fix: pattern length = MAX channel length, so no channel can
+    // overshoot. This test constructs a pattern where channel 0 (length
+    // 6, equivalent of trimmed `[0, 0, 12, 0, 0, 0, 0, 0]`) is shorter
+    // than channel 1 (length 8, full row count). After looping the song
+    // once through a 2-pattern sequence, the playback at sample index
+    // `totalSamples` (which is what source.loop wraps to) should match
+    // sample index 0 — i.e. the loop wraps cleanly to silence and the
+    // first beat doesn't have residual energy from a previous overshoot.
+    const inst = [[0.5, 0, 440, 0, 0, 0.1, 1, 1]]
+    const ch0Trimmed = [0, 0, 12, 0, 0, 0]               // length 6 — trailing zeros stripped
+    const ch1Full = [0, 0, 14, 0, 16, 0, 18, 0]          // length 8 — full row count
+    const patternsA = [[ch0Trimmed, ch1Full], [ch0Trimmed, ch1Full]]
+    const sequenceA = [0, 1]
+
+    const [left] = main.ZZFXM.build(inst, patternsA, sequenceA, BPM)
+    const beatLength = ((main.ZZFXM.sampleRate / BPM) * 60) >> 2
+    // Pattern step count must come from the LONGER channel (8 - 2 = 6 steps)
+    // not channel 0 (6 - 2 = 4 steps). Two patterns × 6 steps × beatLength.
+    const expected = sequenceA.length * (ch1Full.length - 2) * beatLength
+    assert.equal(
+        left.length,
+        expected,
+        `pattern length must use MAX channel length; expected ${expected} samples, got ${left.length}`
+    )
+
+    // Each pattern boundary should be a clean musical edge. Sample at
+    // the boundary index between patterns 0 and 1 (= one pattern's
+    // worth of audio in) should be drawn purely from pattern 1's
+    // first beat — not contaminated by pattern 0 channel 1's overshoot.
+    // We can't easily assert the exact value, but we can assert that
+    // doing the same render with channel 0 PADDED to channel 1's length
+    // produces IDENTICAL output (the fix's invariant — trimmed vs padded
+    // are equivalent because the trim is just removing trailing zeros).
+    const ch0Padded = [...ch0Trimmed, 0, 0]              // length 8 — same as ch1
+    const patternsB = [[ch0Padded, ch1Full], [ch0Padded, ch1Full]]
+    const [leftPadded] = main.ZZFXM.build(inst, patternsB, sequenceA, BPM)
+    assert.ok(
+        arraysEqual(left, leftPadded),
+        'trimmed channel-0 and padded channel-0 must produce identical audio — the trim is information-preserving for ZZFXM playback'
+    )
+})
+
 test('empty sequence renders an empty buffer (no crash)', () => {
     const [left, right] = main.ZZFXM.build(instruments, patterns, [], BPM)
     assert.equal(left.length, 0)
