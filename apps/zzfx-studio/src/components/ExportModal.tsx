@@ -14,7 +14,7 @@ import { colors, fonts, fontSize, spacing } from '../theme';
 import { ZZFX } from 'zzfx';
 import { ZZFXM } from '@zzfx-studio/zzfxm';
 import { zzfxP, unlockAudio, floatsToWav } from '../engine/zzfx';
-import { songToCode, songToClipboard } from '../engine/serialize';
+import { songToCode, songToClipboard, trimChannelsPreservingRowCount } from '../engine/serialize';
 import { songToZzfxm } from '../engine/song';
 import { saveTextFile, saveBinaryFile } from '../platform';
 import type { Song } from '../engine/types';
@@ -233,21 +233,16 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
     if (!rendered) return;
 
     unlockAudio();
-    // Validate the SHIPPED library against the SHIPPED data shape:
-    // synthesize via @zzfx-studio/zzfxm's `ZZFXM.build` (the same
-    // function consumers of the package call) with channels trimmed
-    // the same way `Copy Code` / `Copy Oneliner` output trims them.
-    // If the export dialog's PLAY ZZFXM button sounds wrong, the bug
-    // is reachable by downstream consumers who paste the exported
-    // code into their project — that's the contract we're validating.
+    // Dog-food the export: trim the same way Copy Code does, then play
+    // through the shipped ZZFXM.build.
     const expanded = songToZzfxm(song);
-    const trimZeros = (arr: number[]): number[] => {
+    const trimInstrument = (arr: number[]): number[] => {
       let last = arr.length - 1;
       while (last > 0 && (arr[last] === 0 || arr[last] === undefined)) last--;
       return arr.slice(0, last + 1);
     };
-    const trimmedInstruments = expanded.instruments.map(trimZeros);
-    const trimmedPatterns = expanded.patterns.map(pat => pat.map(trimZeros));
+    const trimmedInstruments = expanded.instruments.map(trimInstrument);
+    const trimmedPatterns = expanded.patterns.map(trimChannelsPreservingRowCount);
     const [left, right] = ZZFXM.build(
       trimmedInstruments,
       trimmedPatterns,

@@ -15,10 +15,20 @@ function fmtParamsCompact(arr: number[]): string {
   return '[' + arr.slice(0, last + 1).map(v => v == null ? '' : +v.toFixed(4)).join(',') + ']';
 }
 
-function fmtChannel(ch: number[]): string {
-  let last = ch.length - 1;
-  while (last > 1 && ch[last] === 0) last--;
-  return '[' + ch.slice(0, last + 1).join(',') + ']';
+/** Trim trailing zeros per channel, but pad the longest channel back
+ * to canonical length so the row count survives. ZZFXM.build keys
+ * pattern boundary advancement off max-channel-length per pattern. */
+export function trimChannelsPreservingRowCount(channels: number[][]): number[][] {
+  if (channels.length === 0) return channels;
+  const canonicalLen = channels.reduce((m, c) => Math.max(m, c.length), 0);
+  const trimmed = channels.map(trimZeros);
+  const trimmedMax = trimmed.reduce((m, c) => Math.max(m, c.length), 0);
+  if (trimmedMax >= canonicalLen) return trimmed;
+  const targetIdx = trimmed.findIndex(c => c.length === trimmedMax);
+  if (targetIdx < 0) return trimmed;
+  const target = trimmed[targetIdx];
+  trimmed[targetIdx] = [...target, ...Array(canonicalLen - target.length).fill(0)];
+  return trimmed;
 }
 
 // Logical 4-channel arrays (for JSON embed / re-import)
@@ -72,7 +82,7 @@ function songToJson(song: Song): string {
       song.patternOrder.map(l => [l, song.patternRoles[l]])
     ),
     instruments: instruments.map(trimZeros),
-    patterns: patterns.map(pat => pat.map(trimZeros)),
+    patterns: patterns.map(trimChannelsPreservingRowCount),
     sequence,
     patternEffects: song.patternOrder.map(l => {
       const fx = song.patternEffects?.[l];
@@ -121,8 +131,8 @@ export function songToCode(song: Song, { includeMetadata = true }: { includeMeta
     const label = song.patternOrder[pi];
     const role = song.patternRoles[label];
     lines.push(`  [ // ${label} (${role})`);
-    for (const ch of expanded.patterns[pi]) {
-      lines.push('    ' + fmtChannel(ch) + ',');
+    for (const ch of trimChannelsPreservingRowCount(expanded.patterns[pi])) {
+      lines.push('    [' + ch.join(',') + '],');
     }
     lines.push('  ],');
   }
@@ -144,7 +154,9 @@ export function songToClipboard(song: Song): string {
 
   const instStr = '[' + expanded.instruments.map(i => fmtParamsCompact(i)).join(',') + ']';
   const patStr = '[' + expanded.patterns.map(pat =>
-    '[' + pat.map(ch => fmtChannel(ch)).join(',') + ']'
+    '[' + trimChannelsPreservingRowCount(pat)
+      .map(ch => '[' + ch.join(',') + ']')
+      .join(',') + ']'
   ).join(',') + ']';
   const seqStr = '[' + expanded.sequence.join(',') + ']';
 
