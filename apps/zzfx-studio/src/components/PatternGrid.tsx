@@ -157,7 +157,7 @@ export function PatternGrid({
 
   const containerRef = useRef<View | null>(null);
   const scrollRef = useRef<ScrollView | null>(null);
-  const geom = useRef({ width: 0, rowHeight: 0, headerHeight: 0, viewportHeight: 0, contentHeight: 0 });
+  const geom = useRef({ width: 0, rowHeight: 0, headerHeight: 0, viewportHeight: 0, contentHeight: 0, noteFieldWidth: 0 });
   const lastAudition = useRef(0);
 
   // Pattern changed under us — park the cursor somewhere valid.
@@ -408,14 +408,22 @@ export function PatternGrid({
   } | null>(null);
 
   const locateCell = useCallback((x: number, y: number) => {
-    const { width, rowHeight } = geom.current;
+    const { width, rowHeight, noteFieldWidth } = geom.current;
     if (!width || !rowHeight) return null;
     const colStart = ROW_NUM_WIDTH;
     if (x < colStart) return null;
     const colWidth = (width - colStart) / CHANNELS;
-    const channel = Math.min(CHANNELS - 1, Math.max(0, Math.floor((x - colStart) / colWidth)));
+    const offset = x - colStart;
+    const channel = Math.min(CHANNELS - 1, Math.max(0, Math.floor(offset / colWidth)));
     const row = Math.min(GRID_ROWS - 1, Math.max(0, Math.floor(y / rowHeight)));
-    return { channel, row };
+
+    // Which half of the cell: the note, or the effect beside it. Without this
+    // a press anywhere in the row would claim the note field.
+    const withinColumn = offset - channel * colWidth - CELL_PAD;
+    const field: CursorField =
+      noteFieldWidth > 0 && withinColumn > noteFieldWidth ? 'effect' : 'note';
+
+    return { channel, row, field };
   }, []);
 
   // Pointer events rather than PanResponder: the grid lives inside a
@@ -441,12 +449,17 @@ export function PatternGrid({
       const cell = locateCell(x, y);
       if (!cell) return;
 
+      dragCtx.current.setCursorFn({ row: cell.row, channel: cell.channel, field: cell.field });
+      setFocused(true);
+      setEditingEffect(false);
+
+      // Drag manipulates notes only — pressing on an effect just moves the
+      // cursor there, leaving ENTER to open the editor.
+      if (cell.field !== 'note') return;
+
       const startNote = dragCtx.current.noteAt(cell.channel, cell.row);
       drag.current = { ...cell, startNote, axis: null, lastApplied: startNote };
       pointerOrigin.current = { x: ne.clientX, y: ne.clientY };
-      dragCtx.current.setCursorFn({ row: cell.row, channel: cell.channel, field: 'note' });
-      setFocused(true);
-      setEditingEffect(false);
 
       // Everything until pointer-up collapses into one undo step, so a drag
       // that crosses twenty thresholds still costs a single ctrl-Z.
@@ -520,7 +533,13 @@ export function PatternGrid({
   }, [onLayoutMetrics]);
 
   return (
-    <View style={styles.container} ref={containerRef} collapsable={false}>
+    <View
+      style={styles.container}
+      ref={containerRef}
+      collapsable={false}
+      focusable={Platform.OS === 'web'}
+      accessibilityLabel="Pattern grid. Arrow keys move the cursor, letters enter notes."
+    >
       <ScrollView
         ref={(r) => {
           scrollRef.current = r;
@@ -702,18 +721,24 @@ export function PatternGrid({
                     <View key={ci} style={[styles.channelCol, isFlashing && styles.channelFlash]}>
                       <View style={styles.cellRow}>
                         <Pressable
+                          focusable={false}
+                          onLayout={
+                            row === 0 && ci === 0
+                              ? (e) => { geom.current.noteFieldWidth = e.nativeEvent.layout.width; }
+                              : undefined
+                          }
                           style={[styles.noteField, NO_FOCUS_RING, noteFocused && styles.cellCursor]}
                           onPress={() => {
                             setFocused(true);
                             setEditingEffect(false);
                             setCursor({ row, channel: ci, field: 'note' });
                           }}
-                          accessibilityRole="button"
                           accessibilityLabel={`Row ${row}, ${CHANNEL_NAMES[ci]}, note ${noteName}`}
                         >
                           <Text style={[styles.noteText, { color: noteColor }]}>{noteName}</Text>
                         </Pressable>
                         <Pressable
+                          focusable={false}
                           style={[
                             styles.fxField,
                             NO_FOCUS_RING,
@@ -725,7 +750,6 @@ export function PatternGrid({
                             setCursor({ row, channel: ci, field: 'effect' });
                             setEditingEffect(false);
                           }}
-                          accessibilityRole="button"
                           accessibilityLabel={`Row ${row}, ${CHANNEL_NAMES[ci]}, effect ${fxStr}`}
                         >
                           <Text
@@ -748,20 +772,13 @@ export function PatternGrid({
         </View>
       </ScrollView>
 
-      {focused && (
-        <View style={styles.hintBar}>
-          <Text style={styles.hintText}>
-            {editingEffect
-              ? '↑↓ code   ←→ value   ⇧←→ ±16   0-F type   ENTER done'
-              : '↑↓←→ move   A-G note   ⇧ sharp   [ ] octave   ENTER effect   DEL clear'}
-          </Text>
-        </View>
-      )}
     </View>
   );
 }
 
 const ROW_NUM_WIDTH = 36;
+/** channelCol's horizontal padding — see styles.channelCol. */
+const CELL_PAD = spacing.xs;
 
 const styles = StyleSheet.create({
   container: {
@@ -919,10 +936,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(232, 116, 14, 0.12)',
   },
   cellEditing: {
-    backgroundColor: 'rgba(232, 116, 14, 0.28)',
+    backgroundColor: colors.accentPrimary,
+    borderColor: colors.accentHover,
   },
   fxEditingText: {
-    color: colors.accentHover,
+    color: colors.bgPrimary,
     fontWeight: '700',
   },
   noteText: {
@@ -931,17 +949,5 @@ const styles = StyleSheet.create({
   },
   channelFlash: {
     backgroundColor: 'rgba(168, 85, 247, 0.15)',
-  },
-  hintBar: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 4,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderTrack,
-    backgroundColor: colors.bgSurface,
-  },
-  hintText: {
-    fontFamily: fonts.mono,
-    fontSize: 9,
-    color: colors.textSecondary,
   },
 });

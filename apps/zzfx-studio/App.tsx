@@ -15,6 +15,7 @@ import {
   PatternGrid,
   ExportModal,
   LoadModal,
+  HelpModal,
   BrandTitle,
   RetroAvatar,
   UpdateBanner,
@@ -123,6 +124,7 @@ export default function App() {
   const [showExport, setShowExport] = useState(false);
   const exportPromiseRef = useRef<Promise<[Float32Array, Float32Array][]> | null>(null);
   const [showLoad, setShowLoad] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   // ADSR progress shared values — driven from RAF, consumed by WaveformPreview on UI thread
   const adsrProgress0 = useSharedValue<number | null>(null);
@@ -441,6 +443,18 @@ export default function App() {
     stopPlayback();
   }, [stopPlayback]);
 
+  const previewParams = useCallback((instrument: number[], channelIndex: number) => {
+    unlockAudio();
+    const params = [...instrument];
+    if (channelIndex === 3) {
+      params[2] *= 2 ** ((12 - 12) / 12);
+    }
+    const samples = ZZFX.buildSamples(...params);
+    if (samples.length > 0) {
+      zzfxP([samples]);
+    }
+  }, []);
+
   const handleRegenPattern = useCallback((label: PatternLabel) => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong) return;
@@ -491,6 +505,7 @@ export default function App() {
       setRenderingChannels(prev => new Set(prev).add(channelIndex));
       renderEngineRef.current.renderSongBuffers(newSong).then(buffers => {
         commitSong(newSong, 'regenerate instrument');
+        previewParams(newInstruments[channelIndex], channelIndex);
         useSongStore.getState().setChannelVolumes(prev => {
           const next = [...prev];
           next[channelIndex] = newVol;
@@ -502,6 +517,7 @@ export default function App() {
       });
     } else {
       commitSong(newSong, 'regenerate instrument');
+      previewParams(newInstruments[channelIndex], channelIndex);
       useSongStore.getState().setChannelVolumes(prev => {
         const next = [...prev];
         next[channelIndex] = newVol;
@@ -625,16 +641,8 @@ export default function App() {
   const handlePreviewInstrument = useCallback((channelIndex: number) => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong) return;
-    unlockAudio();
-    const params = [...currentSong.instruments[channelIndex]];
-    if (channelIndex === 3) {
-      params[2] *= 2 ** ((12 - 12) / 12);
-    }
-    const samples = ZZFX.buildSamples(...params);
-    if (samples.length > 0) {
-      zzfxP([samples]);
-    }
-  }, []);
+    previewParams(currentSong.instruments[channelIndex], channelIndex);
+  }, [previewParams]);
 
   // Export / Import
   const handleImport = useCallback(async () => {
@@ -857,6 +865,14 @@ export default function App() {
               >
                 <Text style={styles.actionBtnText}>EXPORT</Text>
               </AnimatedPressable>
+              <AnimatedPressable
+                onPress={() => setShowHelp(true)}
+                style={styles.actionBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Keyboard shortcuts"
+              >
+                <Text style={styles.actionBtnText}>?</Text>
+              </AnimatedPressable>
             </View>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -965,6 +981,8 @@ export default function App() {
           }}
         />
       ) : null}
+
+      <HelpModal visible={showHelp} onClose={() => setShowHelp(false)} />
 
       {/* Load Modal */}
       <LoadModal
