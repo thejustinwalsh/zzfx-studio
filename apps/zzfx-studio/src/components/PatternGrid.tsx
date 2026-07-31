@@ -43,17 +43,19 @@ import type {
 export const GRID_ROWS = 32;
 
 /**
- * Where three header buttons stop fitting across four channels. Measured from
- * the running app rather than guessed:
+ * Where mute and solo drop out of the channel headers, leaving regenerate —
+ * the only one of the three with no other route to it.
+ *
+ * Measured from the running app, three buttons stop physically fitting at 413:
  *
  *   channel name  33.2   M S R group  58.0   column padding  4.0
  *   (33.2 + 58 + 4) x 4 channels + 32 row-number column = 413
  *
- * Below it mute and solo drop out and regenerate stays, since regenerate is the
- * only one of the three with no other route to it. A phone in portrait (390-430)
- * therefore keeps all three; anything narrower goes compact.
+ * The breakpoint sits above that on purpose. Between 413 and 460 the buttons
+ * fit but the headers crowd the note data, so a phone in portrait goes compact
+ * rather than merely surviving.
  */
-const COMPACT_HEADER_WIDTH = 413;
+const COMPACT_HEADER_WIDTH = 460;
 const CHANNELS = 4;
 const CHANNEL_NAMES = ['LEAD', 'HARM', 'BASS', 'DRUM'];
 const CHANNEL_COLORS = [

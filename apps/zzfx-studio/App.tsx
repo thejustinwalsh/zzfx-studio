@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo } from 'react';
+import { useRef, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo , useState } from 'react';
 import { ZZFX } from 'zzfx';
 import { useSharedValue } from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
@@ -23,7 +23,7 @@ import {
   prefetchHighlighter,
 } from './src/components';
 import type { ChannelNote, RGB } from './src/components';
-import type { NoteEffect } from './src/engine';
+import type { NoteEffect , Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel } from './src/engine';
 import {
   generateSong,
   regenerateForVibe,
@@ -45,12 +45,10 @@ import {
 import { shareCodeFromUrl, SHARE_PARAM, shouldShowMiniPlayer, loadShareCodec, prefetchShareCodec } from './src/engine/share';
 import { EmbedPlayer } from './src/screens/EmbedPlayer';
 import { openTextFile } from './src/platform';
-import type { Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel } from './src/engine';
 import type { ChannelIndex } from './src/theme/colors';
 import { buildOscColorTable } from './src/utils/oscColors';
 import { getPatternColor, getPatternLabelColor, getPatternActiveColor, getPatternActiveLabelColor, getPatternActiveBorderColor } from './src/utils/patternColors';
 import { useSongStore, initializeStore, useStoreHydrated } from './src/store';
-import { useState } from 'react';
 
 function pick<T>(arr: readonly T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
@@ -279,7 +277,7 @@ function Studio() {
   }, [getEffectiveGain]);
 
   const clearAdsrProgress = useCallback(() => {
-    for (const sv of adsrProgressValues) sv.value = null;
+    for (const sv of adsrProgressValues) sv.set(null);
   }, [adsrProgressValues]);
 
   const stopPlayback = useCallback(() => {
@@ -346,17 +344,17 @@ function Studio() {
           const totalDuration = attack + decay + sustain + release;
           if (totalDuration > 0) {
             const p = timeSinceNote / totalDuration;
-            adsrProgressValues[ci].value = p <= 1 ? Math.max(0, Math.min(1, p)) : null;
+            adsrProgressValues[ci].set(p <= 1 ? Math.max(0, Math.min(1, p)) : null);
           } else {
-            adsrProgressValues[ci].value = null;
+            adsrProgressValues[ci].set(null);
           }
         } else {
-          adsrProgressValues[ci].value = null;
+          adsrProgressValues[ci].set(null);
         }
       }
     } else {
       for (let ci = 0; ci < 4; ci++) {
-        adsrProgressValues[ci].value = null;
+        adsrProgressValues[ci].set(null);
       }
     }
 

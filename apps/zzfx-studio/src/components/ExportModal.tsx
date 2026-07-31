@@ -12,6 +12,14 @@ import Animated, {
 } from 'react-native-reanimated';
 import { AnimatedPressable } from './AnimatedPressable';
 import { embedSnippet, loadShareCodec, prefetchShareCodec } from '../engine/share';
+import { colors, fonts, fontSize, spacing } from '../theme';
+import { ZZFX } from 'zzfx';
+import { ZZFXM } from '@zzfx-studio/zzfxm';
+import { zzfxP, unlockAudio, floatsToWav } from '../engine/zzfx';
+import { songToCode, songToClipboard, trimChannelsPreservingRowCount } from '../engine/serialize';
+import { songToZzfxm } from '../engine/song';
+import { saveTextFile, saveBinaryFile } from '../platform';
+import type { Song } from '../engine/types';
 
 /** Clipboard with the execCommand fallback for browsers that refuse the API. */
 async function copyText(text: string): Promise<void> {
@@ -26,14 +34,6 @@ async function copyText(text: string): Promise<void> {
     document.body.removeChild(ta);
   }
 }
-import { colors, fonts, fontSize, spacing } from '../theme';
-import { ZZFX } from 'zzfx';
-import { ZZFXM } from '@zzfx-studio/zzfxm';
-import { zzfxP, unlockAudio, floatsToWav } from '../engine/zzfx';
-import { songToCode, songToClipboard, trimChannelsPreservingRowCount } from '../engine/serialize';
-import { songToZzfxm } from '../engine/song';
-import { saveTextFile, saveBinaryFile } from '../platform';
-import type { Song } from '../engine/types';
 
 type StereoBuffer = [Float32Array, Float32Array];
 
@@ -317,14 +317,14 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
 
   const settleShare = useCallback((next: 'copied' | 'failed') => {
     setShareState(next);
-    shareOpacity.value = 1;
+    shareOpacity.set(1);
     if (shareResetRef.current) clearTimeout(shareResetRef.current);
     shareResetRef.current = setTimeout(() => {
-      shareOpacity.value = withTiming(0, { duration: 220 }, (done) => {
+      shareOpacity.set(withTiming(0, { duration: 220 }, (done) => {
         if (!done) return;
         runOnJS(setShareState)('idle');
-        shareOpacity.value = withTiming(1, { duration: 220 });
-      });
+        shareOpacity.set(withTiming(1, { duration: 220 }));
+      }));
     }, 900);
   }, [shareOpacity]);
 
@@ -335,7 +335,7 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
   const runShare = useCallback(async (build: () => Promise<string>) => {
     if (shareState === 'working') return;
     setShareState('working');
-    shareOpacity.value = 1;
+    shareOpacity.set(1);
     try {
       await copyText(await build());
       settleShare('copied');
@@ -364,7 +364,7 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
     [runShare, song]
   );
 
-  const shareAnimatedStyle = useAnimatedStyle(() => ({ opacity: shareOpacity.value }));
+  const shareAnimatedStyle = useAnimatedStyle(() => ({ opacity: shareOpacity.get() }));
 
   const SPINNER = ['|', '/', '-', '\\'];
   const shareGlyph =
@@ -395,21 +395,21 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
   const pulseOpacity = useSharedValue(1);
   useEffect(() => {
     if (isRendering) {
-      pulseOpacity.value = withRepeat(
+      pulseOpacity.set(withRepeat(
         withSequence(
           withTiming(0.25, { duration: 600, easing: Easing.inOut(Easing.ease) }),
           withTiming(0.6, { duration: 600, easing: Easing.inOut(Easing.ease) }),
         ),
         -1, false,
-      );
+      ));
     } else {
       cancelAnimation(pulseOpacity);
-      pulseOpacity.value = withTiming(1, { duration: 300 });
+      pulseOpacity.set(withTiming(1, { duration: 300 }));
     }
   }, [isRendering, pulseOpacity]);
 
   const waveformAnimStyle = useAnimatedStyle(() => ({
-    opacity: pulseOpacity.value,
+    opacity: pulseOpacity.get(),
   }));
 
   const BAR_HEIGHT = 48;

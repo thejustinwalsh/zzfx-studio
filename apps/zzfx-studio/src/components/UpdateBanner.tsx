@@ -17,17 +17,17 @@ export function UpdateBanner() {
   useEffect(() => {
     if (hasUpdate) {
       // Slide up after a short delay so it doesn't fight the initial render
-      translateY.value = withDelay(400, withTiming(0, { duration: 250 }));
-      opacity.value = withDelay(400, withTiming(1, { duration: 250 }));
+      translateY.set(withDelay(400, withTiming(0, { duration: 250 })));
+      opacity.set(withDelay(400, withTiming(1, { duration: 250 })));
     } else {
-      translateY.value = 60;
-      opacity.value = 0;
+      translateY.set(60);
+      opacity.set(0);
     }
   }, [hasUpdate]);
 
   const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
-    opacity: opacity.value,
+    transform: [{ translateY: translateY.get() }],
+    opacity: opacity.get(),
   }));
 
   if (isNeu() || !hasUpdate) return null;

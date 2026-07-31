@@ -20,6 +20,9 @@ const CHANNEL_COLORS = [colors.ch0Primary, colors.ch1Primary, colors.ch2Primary,
  */
 const TITLE_SIZE = 18;
 const ICON_SIZE = 16;
+
+/** Breathing room between the title, transport, spectrum and position rows. */
+const ROW_GAP = 7;
 const CHANNEL_NAMES = ['LEAD', 'HARM', 'BASS', 'DRUM'];
 
 type Phase = 'loading' | 'ready' | 'empty' | 'session';
@@ -54,6 +57,10 @@ export function EmbedPlayer() {
   // a ref update would leave the total reading 0:00 until something unrelated
   // happened to re-render.
   const [duration, setDuration] = useState(0);
+  // The spectrum fills whatever the fixed rows leave behind. Measuring the box
+  // it actually gets beats computing it: arithmetic and flex disagreed, and the
+  // difference showed up as slack above and below the bars.
+  const [scopeBox, setScopeBox] = useState(0);
 
   const audioRef = useRef<AudioGraph | null>(null);
   const engineRef = useRef(createRenderEngine());
@@ -116,10 +123,7 @@ export function EmbedPlayer() {
   const iconSize = tiny ? 13 : ICON_SIZE;
   const timeSize = tiny ? 16 : height < 220 ? 24 : 30;
   // Everything left after the title bar and position row goes to the band.
-  const chrome = (tiny ? 20 : 24) + 14 + spacing.md * 2 + spacing.sm * 3;
-  // The spectrum owns whatever vertical space the fixed rows leave behind.
-  const bandHeight = playSize + spacing.sm;
-  const scopeHeight = Math.max(20, Math.min(140, height - chrome - bandHeight));
+  const scopeHeight = Math.max(20, scopeBox);
   const barCount = wide ? 96 : narrow ? 28 : 56;
 
   // Where the playhead sits, so the spectrum can be tinted by the notes
@@ -273,7 +277,10 @@ export function EmbedPlayer() {
       </View>
 
       {/* The spectrum gets the full width, on its own line. */}
-      <View style={styles.scope}>
+      <View
+        style={styles.scope}
+        onLayout={(e) => setScopeBox(Math.round(e.nativeEvent.layout.height))}
+      >
         <Oscilloscope
           analyser={audioRef.current?.getAnalyser() ?? null}
           isPlaying={isPlaying}
@@ -366,7 +373,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bgPrimary,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
-    gap: spacing.sm,
+    gap: ROW_GAP,
   },
   titleBar: {
     flexDirection: 'row',
@@ -506,7 +513,7 @@ const styles = StyleSheet.create({
   scope: {
     flex: 1,
     justifyContent: 'center',
-    minHeight: 22,
+    minHeight: 20,
   },
   progressTrack: {
     flex: 1,

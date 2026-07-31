@@ -1,5 +1,7 @@
 import { registerRootComponent } from 'expo';
 import { Platform } from 'react-native';
+
+import App from './App';
 if (process.env.EXPO_PUBLIC_DISABLE_SW !== '1') {
   const { registerServiceWorker } = require('./src/sw-register');
   registerServiceWorker();
@@ -27,6 +29,4 @@ if (Platform.OS === 'web' && typeof document !== 'undefined') {
   `;
   document.head.appendChild(style);
 }
-
-import App from './App';
 registerRootComponent(App);
