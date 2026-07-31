@@ -12,7 +12,8 @@
     "build:worker": "esbuild src/engine/render-worker.ts --bundle --outfile=public/render-worker.js --format=iife --minify --tree-shaking=true --target=es2020 --inject:src/engine/worker-polyfill.ts",
     "build:web": "pnpm run build:worker && npx expo export --platform web && node -e \"fs=require('fs');p=require('./package.json');fs.writeFileSync('dist/version.json',JSON.stringify({version:p.version}))\" && npx workbox-cli injectManifest workbox-config.js",
     "preview": "pnpm run build:web && npx serve dist -l 3000",
-    "test": "node --import tsx --import ./test/setup.ts --test test/*.test.ts"
+    "test": "node --import tsx --import ./test/setup.ts --test test/*.test.ts",
+    "og": "node --import tsx scripts/generate-og-image.ts"
   },
   "dependencies": {
     "@expo/metro-runtime": "^55.0.6",
@@ -35,6 +36,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.0",
+    "@resvg/resvg-js": "^2.6.2",
     "@types/lz-string": "^1.5.0",
     "@types/node": "^26.1.2",
     "@types/react": "~19.2.2",
