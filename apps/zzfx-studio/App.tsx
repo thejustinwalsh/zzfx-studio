@@ -48,6 +48,7 @@ import { openTextFile } from './src/platform';
 import type { ChannelIndex } from './src/theme/colors';
 import { buildOscColorTable } from './src/utils/oscColors';
 import { getPatternColor, getPatternLabelColor, getPatternActiveColor, getPatternActiveLabelColor, getPatternActiveBorderColor } from './src/utils/patternColors';
+import { useShallow } from 'zustand/react/shallow';
 import { useSongStore, initializeStore, useStoreHydrated } from './src/store';
 
 function pick<T>(arr: readonly T[]): T {
@@ -135,11 +136,36 @@ function Studio() {
   const mutedChannels = useSongStore(s => s.mutedChannels);
   const soloChannel = useSongStore(s => s.soloChannel);
 
+  // Subscribed through the hook rather than read off getState(): calling
+  // getState() during render hands the compiler a hook as a plain value, and it
+  // stops optimising the component. getState() is kept for events, where a
+  // non-reactive read is the point.
+  //
+  // useShallow because the selector builds a new object each render. These are
+  // all actions, whose identities never change, so nothing ever re-renders from
+  // it — without the shallow compare zustand v5 would flag an uncached snapshot.
   const {
     setSong, setVibe, setKey, setScale, setBpm, setSongLength,
     setActivePattern, toggleMute, toggleSolo, updateVolume,
     generate, loadSong, renameSong, commitSong,
-  } = useSongStore.getState();
+  } = useSongStore(
+    useShallow((s) => ({
+      setSong: s.setSong,
+      setVibe: s.setVibe,
+      setKey: s.setKey,
+      setScale: s.setScale,
+      setBpm: s.setBpm,
+      setSongLength: s.setSongLength,
+      setActivePattern: s.setActivePattern,
+      toggleMute: s.toggleMute,
+      toggleSolo: s.toggleSolo,
+      updateVolume: s.updateVolume,
+      generate: s.generate,
+      loadSong: s.loadSong,
+      renameSong: s.renameSong,
+      commitSong: s.commitSong,
+    }))
+  );
 
   // Editable song name — local state for responsive typing, debounced to store
   const [editingName, setEditingName] = useState<string | null>(null);

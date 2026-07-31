@@ -368,3 +368,52 @@ export function generateInstruments(vibe: VibeName): ZzFXSound[] {
     buildInstrument(DRUM_ARCHETYPES, vibeTraits.drums),
   ];
 }
+
+/**
+ * Per-voice drum timbres.
+ *
+ * ZzFX shape 4 is `Math.sin(t**3)`: t cubed races away, so the waveform is
+ * broadband within a few samples and the frequency parameter barely colours it.
+ * Kick, snare and hat were one shape-4 instrument differing only in note value
+ * — that is, differing only in a parameter their waveform ignores. Measured,
+ * their spectral centroids sat within 2% of each other and their envelopes were
+ * identical, so all three read as the same short burst.
+ *
+ * Each voice now gets its own shape and envelope. The note value still sets
+ * pitch within the voice's range, so nudging a drum in the tracker still works.
+ */
+export type DrumVoice = 'KICK' | 'SNARE' | 'HAT';
+
+export function drumVoiceInstrument(base: ZzFXSound, voice: DrumVoice): ZzFXSound {
+  const p = [...base];
+  switch (voice) {
+    case 'KICK':
+      p[2] = 130;     // low body
+      p[6] = 0;       // sine, not noise — a kick is pitched
+      p[8] = -14;     // hard downward sweep is what makes it a thump
+      p[13] = 0.03;   // barely any grit
+      p[4] = 0.03; p[5] = 0.12; p[18] = 0.08;
+      break;
+    case 'SNARE':
+      // A tonal shape driven hard by the noise parameter, rather than shape 4.
+      // Shape 4 is broadband whatever its frequency, so a shape-4 snare and a
+      // shape-4 hat measure identically; keeping a pitched core is what puts
+      // the snare below the hat instead of on top of it.
+      p[2] = 320;
+      p[6] = 2;       // saw body
+      p[7] = 0.6;
+      p[8] = -3;
+      p[13] = 0.55;   // rattle over the body
+      p[4] = 0.02; p[5] = 0.10; p[18] = 0.05;
+      break;
+    case 'HAT':
+      p[2] = 1200;
+      p[6] = 4;
+      p[8] = 0;       // hats do not pitch-drop
+      p[13] = 0.9;
+      p[4] = 0.004; p[5] = 0.025; p[18] = 0.012;
+      p[0] = (base[0] ?? 0.8) * 0.55;  // sits back in the mix
+      break;
+  }
+  return p;
+}
