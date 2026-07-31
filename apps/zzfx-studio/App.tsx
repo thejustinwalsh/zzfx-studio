@@ -787,8 +787,12 @@ function Studio() {
     void loadMidi().then(({ routeToChannels, midiNoteToZzfxm, quantizeToRow }) => {
       for (const ch of routeToChannels(armedChannels, event.channel)) {
         const base = baseOctaveFromFreq(currentSong.instruments[ch]?.[2] ?? 261.63);
+        // Outside the range — dropped, not clamped. `continue`, not `return`:
+        // the channels are tuned differently, so a note the bass cannot reach
+        // is often perfectly playable on the lead, and returning here would
+        // silently drop every armed channel after the first that refused it.
         const value = midiNoteToZzfxm(event.note, base);
-        if (value === null) return;   // outside the range — dropped, not clamped
+        if (value === null) continue;
 
         if (audioGraphRef.current?.isPlaying) {
           const row = quantizeToRow(
