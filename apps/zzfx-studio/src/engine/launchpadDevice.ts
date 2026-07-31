@@ -18,6 +18,11 @@ import {
   PROGRAMMER_MODE_OFF,
   PROGRAMMER_MODE_ON,
   SCENE_CC,
+  CC_DOWN,
+  CC_DRUMS,
+  CC_KEYS,
+  CC_SESSION,
+  CC_UP,
   TOP_CC,
   buildKeysLayout,
   isGridPad,
@@ -34,6 +39,7 @@ import {
   type MidiSink,
 } from './launchpad';
 import type { NoteName, ScaleName } from './types';
+import { DEFAULT_BASE_OCTAVE, octaveRangeFor } from './scales';
 
 // --- palette ----------------------------------------------------------------
 
@@ -84,12 +90,32 @@ export interface LaunchpadEvent {
 
 export interface LayoutTables {
   layout: Layout;
-  /** Rebuilt when the song's key or scale changes. */
+  octave: number;
+  /** Rebuilt when the song's key, scale or octave changes. */
   keys: Int8Array;
 }
 
-export function layoutTables(layout: Layout, root: NoteName, scale: ScaleName): LayoutTables {
-  return { layout, keys: buildKeysLayout(root, scale) };
+/**
+ * Octaves of scale notes to generate for KEYS.
+ *
+ * A quadrant shows sixteen degrees; four octaves of a seven-note scale is
+ * twenty-eight, so every pad is reachable with headroom for pentatonic.
+ */
+const KEYS_OCTAVE_SPAN = 3;
+
+/**
+ * Build the tables for a layout at a given octave.
+ *
+ * The octave is the tracker's own, shared with the grid rather than kept
+ * separately — two octave controls that disagree would be worse than none.
+ */
+export function layoutTables(
+  layout: Layout,
+  root: NoteName,
+  scale: ScaleName,
+  octave: number = DEFAULT_BASE_OCTAVE
+): LayoutTables {
+  return { layout, octave, keys: buildKeysLayout(root, scale, octave, octave + KEYS_OCTAVE_SPAN) };
 }
 
 /**
@@ -181,12 +207,21 @@ export interface LaunchpadViewState {
   queuedPattern: number | null;
   /** `[pattern][channel]` — whether that cell has any notes at all. */
   patternFill: readonly (readonly boolean[])[];
+  /** The tracker's octave, shared with the grid. */
+  octave: number;
 }
 
+/**
+ * Layouts sit on the buttons the hardware prints them on.
+ *
+ * The first four top-row CCs are the arrows; putting layouts there made the
+ * legend on the device lie about its own buttons. The arrows drive the octave
+ * instead, which is what an arrow on an instrument usually does.
+ */
 const TOP_LAYOUT_BUTTONS: Record<Layout, number> = {
-  SESSION: TOP_CC[0],
-  KEYS: TOP_CC[1],
-  DRUMS: TOP_CC[2],
+  SESSION: CC_SESSION,
+  DRUMS: CC_DRUMS,
+  KEYS: CC_KEYS,
 };
 
 /**
@@ -203,6 +238,12 @@ export function renderLaunchpad(surface: LedSurface, state: LaunchpadViewState):
     surface.set(cc, scaleRgb(CURSOR_CELL, on ? LEVEL_ACTIVE : LEVEL_IDLE));
   }
   surface.set(LOGO_CC, scaleRgb(CURSOR_CELL, LEVEL_PRESENT));
+
+  // The arrows step the octave. Each is lit only while it has somewhere to go,
+  // so running out of range is visible before you press into it.
+  const { min, max } = octaveRangeFor(DEFAULT_BASE_OCTAVE);
+  surface.set(CC_UP, scaleRgb(CURSOR_CELL, state.octave < max ? LEVEL_PRESENT : LEVEL_IDLE));
+  surface.set(CC_DOWN, scaleRgb(CURSOR_CELL, state.octave > min ? LEVEL_PRESENT : LEVEL_IDLE));
 
   if (state.layout === 'SESSION') renderSession(surface, state);
   else renderInstrument(surface, state);

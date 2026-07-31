@@ -7,7 +7,7 @@ import * as devMod from '../src/engine/launchpadDevice';
 const lp = (lpMod as any).default ?? lpMod;
 const dev = (devMod as any).default ?? devMod;
 
-const tables = (layout: string) => dev.layoutTables(layout, 'C', 'major');
+const tables = (layout: string, octave = 4) => dev.layoutTables(layout, 'C', 'major', octave);
 
 const KEYS = tables('KEYS');
 const DRUMS = tables('DRUMS');
@@ -22,6 +22,7 @@ const baseState = (over: Record<string, unknown> = {}) => ({
   activePattern: 0,
   queuedPattern: null,
   patternFill: [],
+  octave: 4,
   ...over,
 });
 
@@ -129,14 +130,71 @@ test('every decoded note is playable', () => {
 
 // --- rendering --------------------------------------------------------------
 
+test('layouts live on the buttons the hardware prints them on', () => {
+  // The Mini MK3's top row is  ↑ ↓ ← →  Session Drums Keys User.  Driving
+  // layouts from the arrows made every printed label on the device a lie.
+  assert.deepEqual(
+    [lp.CC_UP, lp.CC_DOWN, lp.CC_LEFT, lp.CC_RIGHT],
+    [91, 92, 93, 94],
+    'the arrows are the first four top-row CCs'
+  );
+  assert.deepEqual(
+    [lp.CC_SESSION, lp.CC_DRUMS, lp.CC_KEYS, lp.CC_USER],
+    [95, 96, 97, 98],
+    'the named mode buttons follow them'
+  );
+
+  for (const cc of [lp.CC_SESSION, lp.CC_DRUMS, lp.CC_KEYS]) {
+    const e = dev.decodeLaunchpad([0xb0, cc, 127], SESSION);
+    assert.equal(e.kind, 'top', `CC ${cc} did not decode as a top-row press`);
+    assert.equal(e.index, cc);
+  }
+});
+
 test('the top row shows which layout is active', () => {
   const s = new lp.LedSurface();
   dev.renderLaunchpad(s, baseState({ layout: 'KEYS' }));
   const bright = lp.scaleRgb(dev.CURSOR_CELL, dev.LEVEL_ACTIVE);
   const dim = lp.scaleRgb(dev.CURSOR_CELL, dev.LEVEL_IDLE);
-  assert.equal(s.get(lp.TOP_CC[1]), bright, 'KEYS should be lit');
-  assert.equal(s.get(lp.TOP_CC[0]), dim, 'SESSION should be dim');
-  assert.equal(s.get(lp.TOP_CC[2]), dim, 'DRUMS should be dim');
+  assert.equal(s.get(lp.CC_KEYS), bright, 'KEYS should be lit');
+  assert.equal(s.get(lp.CC_SESSION), dim, 'SESSION should be dim');
+  assert.equal(s.get(lp.CC_DRUMS), dim, 'DRUMS should be dim');
+});
+
+test('no layout is bound to an arrow', () => {
+  const s = new lp.LedSurface();
+  for (const layout of ['SESSION', 'KEYS', 'DRUMS']) {
+    dev.renderLaunchpad(s, baseState({ layout }));
+    const active = lp.scaleRgb(dev.CURSOR_CELL, dev.LEVEL_ACTIVE);
+    for (const arrow of [lp.CC_LEFT, lp.CC_RIGHT]) {
+      assert.notEqual(s.get(arrow), active, `${layout} lit an arrow as if it were its button`);
+    }
+  }
+});
+
+test('the octave arrows dim at the ends of the range', () => {
+  const s = new lp.LedSurface();
+  const lit = lp.scaleRgb(dev.CURSOR_CELL, dev.LEVEL_PRESENT);
+  const dim = lp.scaleRgb(dev.CURSOR_CELL, dev.LEVEL_IDLE);
+
+  dev.renderLaunchpad(s, baseState({ octave: 5 }));
+  assert.equal(s.get(lp.CC_UP), lit, 'up should be lit mid-range');
+  assert.equal(s.get(lp.CC_DOWN), lit, 'down should be lit mid-range');
+
+  dev.renderLaunchpad(s, baseState({ octave: 3 }));
+  assert.equal(s.get(lp.CC_DOWN), dim, 'down should dim at the floor');
+  assert.equal(s.get(lp.CC_UP), lit);
+
+  dev.renderLaunchpad(s, baseState({ octave: 7 }));
+  assert.equal(s.get(lp.CC_UP), dim, 'up should dim at the ceiling');
+  assert.equal(s.get(lp.CC_DOWN), lit);
+});
+
+test('the octave shifts what the KEYS pads play', () => {
+  const low = dev.layoutTables('KEYS', 'C', 'major', 4);
+  const high = dev.layoutTables('KEYS', 'C', 'major', 5);
+  const pad = lp.padIndex(1, 1);
+  assert.equal(high.keys[pad] - low.keys[pad], 12, 'an octave up should be twelve semitones');
 });
 
 test('an armed channel is brighter than an idle one', () => {

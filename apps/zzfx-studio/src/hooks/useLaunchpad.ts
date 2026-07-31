@@ -2,7 +2,8 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
 
 import { loadLaunchpad } from '../engine/launchpadLoader';
 import type { LaunchpadEvent, LaunchpadSession, LaunchpadViewState } from '../engine/launchpadDevice';
-import type { Layout } from '../engine/launchpad';
+import { CC_DOWN, CC_DRUMS, CC_KEYS, CC_SESSION, CC_UP, type Layout } from '../engine/launchpad';
+import { DEFAULT_BASE_OCTAVE, octaveRangeFor } from '../engine/scales';
 import type { PatternLabel, Song } from '../engine/types';
 
 /** Notes start at index 2 of a channel row; the first two are instrument and pan. */
@@ -12,8 +13,17 @@ const NO_PADS: ReadonlySet<number> = new Set<number>();
 
 type LaunchpadModule = Awaited<ReturnType<typeof loadLaunchpad>>;
 
-/** Which layout each top-row button selects, left to right. */
-const LAYOUT_BUTTONS: Record<number, Layout> = { 91: 'SESSION', 92: 'KEYS', 93: 'DRUMS' };
+/**
+ * Which layout each top-row button selects.
+ *
+ * The buttons are printed on the hardware: Session, Drums, Keys, User. The four
+ * CCs before them are the arrows, which drive the octave.
+ */
+const LAYOUT_BUTTONS: Record<number, Layout> = {
+  [CC_SESSION]: 'SESSION',
+  [CC_DRUMS]: 'DRUMS',
+  [CC_KEYS]: 'KEYS',
+};
 
 export interface UseLaunchpadOptions {
   song: Song | null;
@@ -23,6 +33,9 @@ export interface UseLaunchpadOptions {
   onNote: (channel: number, note: number, velocity: number) => void;
   /** A session cell or scene button selected a pattern. */
   onSelectPattern: (patternIndex: number) => void;
+  /** The tracker's octave, shared with the grid rather than held separately. */
+  octave: number;
+  onOctaveChange: (next: number) => void;
 }
 
 export interface LaunchpadControls {
@@ -57,7 +70,7 @@ export function useLaunchpad(opts: UseLaunchpadOptions): LaunchpadControls {
 
   const supported = typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator;
 
-  const { song, activePattern, armedChannels, onNote, onSelectPattern } = opts;
+  const { song, activePattern, armedChannels, onNote, onSelectPattern, octave, onOctaveChange } = opts;
   const key = song?.config.key ?? 'C';
   const scale = song?.config.scale ?? 'major';
 
@@ -69,8 +82,8 @@ export function useLaunchpad(opts: UseLaunchpadOptions): LaunchpadControls {
    * second for a result that almost never differs.
    */
   const tables = useMemo(
-    () => (module ? module.layoutTables(layout, key, scale) : null),
-    [module, layout, key, scale]
+    () => (module ? module.layoutTables(layout, key, scale, octave) : null),
+    [module, layout, key, scale, octave]
   );
 
   /**
@@ -104,8 +117,18 @@ export function useLaunchpad(opts: UseLaunchpadOptions): LaunchpadControls {
    */
   const handleEvent = useEffectEvent((event: LaunchpadEvent) => {
     if (event.kind === 'top') {
+      if (!event.pressed) return;
       const picked = LAYOUT_BUTTONS[event.index];
-      if (picked && event.pressed) setLayout(picked);
+      if (picked) { setLayout(picked); return; }
+
+      if (event.index === CC_UP || event.index === CC_DOWN) {
+        const { min, max } = octaveRangeFor(DEFAULT_BASE_OCTAVE);
+        const next = octave + (event.index === CC_UP ? 1 : -1);
+        // Stop at the edge rather than wrapping — an octave that jumps from the
+        // top of the range to the bottom under your finger is never what you
+        // wanted, and the arrow is already dimmed to say so.
+        if (next >= min && next <= max) onOctaveChange(next);
+      }
       return;
     }
 
@@ -159,7 +182,7 @@ export function useLaunchpad(opts: UseLaunchpadOptions): LaunchpadControls {
         const mod = await loadLaunchpad();
         if (cancelled) return;
         const session = await mod.openLaunchpad({
-          tables: mod.layoutTables('KEYS', 'C', 'major'),
+          tables: mod.layoutTables('KEYS', 'C', 'major', DEFAULT_BASE_OCTAVE),
           onEvent: handleEvent,
           onDisconnect: () => setWanted(false),
         });
@@ -208,9 +231,10 @@ export function useLaunchpad(opts: UseLaunchpadOptions): LaunchpadControls {
       activePattern: activeIndex,
       queuedPattern: null,
       patternFill,
+      octave,
     };
     session.render(state);
-  }, [enabled, tables, layout, armed, held, patternFill, activeIndex]);
+  }, [enabled, tables, layout, armed, held, patternFill, activeIndex, octave]);
 
   return {
     supported,

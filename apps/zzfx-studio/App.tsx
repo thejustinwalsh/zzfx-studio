@@ -44,6 +44,7 @@ import {
   VIBE_CONFIG,
   codeToSong,
   baseOctaveFromFreq,
+  DEFAULT_BASE_OCTAVE,
   drumVoiceInstrument,
   drumVoiceOf,
 } from './src/engine';
@@ -225,6 +226,9 @@ function Studio() {
   const [midiDevices, setMidiDevices] = useState<{ id: string; name: string; manufacturer: string }[]>([]);
   const [midiError, setMidiError] = useState<string | null>(null);
   const [armedChannels, setArmedChannels] = useState<number[]>([0]);
+  // Lifted out of the grid so the Launchpad's arrows and the grid's own octave
+  // button move the same register rather than disagreeing about it.
+  const [octave, setOctave] = useState(DEFAULT_BASE_OCTAVE);
   const midiSessionRef = useRef<{ dispose(): void } | null>(null);
   const midiSupported = Platform.OS === 'web'
     && typeof navigator !== 'undefined'
@@ -897,6 +901,8 @@ function Studio() {
     armedChannels,
     onNote: handleLaunchpadNote,
     onSelectPattern: handleLaunchpadPattern,
+    octave,
+    onOctaveChange: setOctave,
   });
 
   const handlePreviewInstrument = useCallback((channelIndex: number) => {
@@ -1185,6 +1191,8 @@ function Studio() {
           midiEnabled={midiEnabled}
           armedChannels={armedChannels}
           onToggleArm={toggleArm}
+          octave={octave}
+          setOctave={setOctave}
           onBeginEdit={useSongStore.getState().beginEdit}
           onEndEdit={useSongStore.getState().endEdit}
           isPlaying={isPlaying}

@@ -90,6 +90,29 @@ export const SCENE_CC = [89, 79, 69, 59, 49, 39, 29, 19] as const;
 /** Top row, left to right. Control changes, not notes. */
 export const TOP_CC = [91, 92, 93, 94, 95, 96, 97, 98] as const;
 
+/**
+ * The top row is printed on the hardware, and the two halves mean different
+ * things: four arrows, then four named mode buttons.
+ *
+ *   91  92  93  94   95        96      97     98
+ *   ↑   ↓   ←   →    Session   Drums   Keys   User
+ *
+ * Layouts belong on the named buttons — pressing the one that says Keys should
+ * give you keys. Driving them from the arrows instead means the legend on the
+ * device lies about what its own buttons do.
+ */
+export const CC_UP = 91;
+export const CC_DOWN = 92;
+export const CC_LEFT = 93;
+export const CC_RIGHT = 94;
+export const CC_SESSION = 95;
+export const CC_DRUMS = 96;
+export const CC_KEYS = 97;
+export const CC_USER = 98;
+
+/** The four arrows, which we deliberately leave alone. */
+export const ARROW_CC = [CC_UP, CC_DOWN, CC_LEFT, CC_RIGHT] as const;
+
 /** The illuminated logo, addressable like any other LED. */
 export const LOGO_CC = 99;
 

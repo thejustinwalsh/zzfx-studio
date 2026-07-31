@@ -106,6 +106,9 @@ interface PatternGridProps {
   midiEnabled: boolean;
   armedChannels: number[];
   onToggleArm: (ch: number) => void;
+  /** Lifted so a Launchpad's arrows and the grid step the same register. */
+  octave: number;
+  setOctave: React.Dispatch<React.SetStateAction<number>>;
   onToggleMute: (ch: number) => void;
   onToggleSolo: (ch: number) => void;
   onRegenChannel: (ch: number) => void;
@@ -165,6 +168,8 @@ export function PatternGrid({
   midiEnabled,
   armedChannels,
   onToggleArm,
+  octave: rawOctave,
+  setOctave,
   onToggleMute,
   onToggleSolo,
   onRegenChannel,
@@ -184,7 +189,6 @@ export function PatternGrid({
 
   const [cursor, setCursor] = useState<Cursor>({ row: 0, channel: 0, field: 'note' });
   const [focused, setFocused] = useState(false);
-  const [rawOctave, setOctave] = useState(4);
   const [dragEnabled, setDragEnabled] = useState(prefersPointer);
   /**
    * Which field the cursor is *inside*, as opposed to merely sitting on, and
