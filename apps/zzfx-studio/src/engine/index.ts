@@ -39,9 +39,8 @@ export type {
   VibeConfig,
 } from './types';
 export {
-  SHARE_PARAM, packSong, unpackSong, songToShareCode, songFromShareCode,
-  shareCodeFromUrl, songToShareUrl, isShareSupported,
-  EMBED_PARAM, songToEmbedUrl, embedSnippet, isEmbedUrl,
-  shouldShowMiniPlayer, MINI_PLAYER_MAX_HEIGHT, DEFAULT_EMBED_HEIGHT, DEFAULT_EMBED_WIDTH,
-  STUDIO_IDEAL_HEIGHT, MIN_USABLE_ROWS, IDEAL_ROWS, studioHeightForRows,
+  SHARE_PARAM, shareCodeFromUrl, shouldShowMiniPlayer, embedSnippet,
+  loadShareCodec, prefetchShareCodec,
+  MINI_PLAYER_MAX_HEIGHT, STUDIO_IDEAL_HEIGHT, DEFAULT_EMBED_HEIGHT, DEFAULT_EMBED_WIDTH,
+  MIN_USABLE_ROWS, IDEAL_ROWS, studioHeightForRows,
 } from './share';

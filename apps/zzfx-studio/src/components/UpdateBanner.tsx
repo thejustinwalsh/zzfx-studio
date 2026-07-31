@@ -9,7 +9,8 @@ import { useServiceWorkerUpdate, applyUpdate, dismissUpdate } from '../sw-regist
 export function UpdateBanner() {
   const { hasUpdate, version } = useServiceWorkerUpdate();
 
-  if (isNeu()) return null;
+  // Every hook runs before any early return — bailing out first changes the
+  // hook count between renders, which is what Rules of Hooks forbids.
   const translateY = useSharedValue(60);
   const opacity = useSharedValue(0);
 
@@ -29,7 +30,7 @@ export function UpdateBanner() {
     opacity: opacity.value,
   }));
 
-  if (!hasUpdate) return null;
+  if (isNeu() || !hasUpdate) return null;
 
   return (
     <Animated.View style={[styles.container, animatedStyle]}>

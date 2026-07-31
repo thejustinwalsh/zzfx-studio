@@ -13,7 +13,8 @@
     "build:web": "pnpm run build:worker && npx expo export --platform web && node -e \"fs=require('fs');p=require('./package.json');fs.writeFileSync('dist/version.json',JSON.stringify({version:p.version}))\" && npx workbox-cli injectManifest workbox-config.js",
     "preview": "pnpm run build:web && npx serve dist -l 3000",
     "test": "node --import tsx --import ./test/setup.ts --test test/*.test.ts",
-    "og": "node --import tsx scripts/generate-og-image.ts"
+    "og": "node --import tsx scripts/generate-og-image.ts",
+    "lint": "expo lint"
   },
   "dependencies": {
     "@expo/metro-runtime": "^55.0.6",
@@ -40,7 +41,11 @@
     "@types/lz-string": "^1.5.0",
     "@types/node": "^26.1.2",
     "@types/react": "~19.2.2",
+    "babel-plugin-react-compiler": "^1.0.0",
     "esbuild": "^0.27.0",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "~55.0.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "tsx": "^4.21.0",
     "typescript": "~5.9.2",
     "workbox-cli": "^7.4.0"

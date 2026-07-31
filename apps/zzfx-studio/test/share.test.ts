@@ -2,12 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import * as shareMod from '../src/engine/share';
+import * as codecMod from '../src/engine/shareCodec';
 import * as scalesMod from '../src/engine/scales';
 import * as typesMod from '../src/engine/types';
 import * as instrumentsMod from '../src/engine/instruments';
 import * as songMod from '../src/engine/song';
 
-const share = (shareMod as any).default ?? shareMod;
+const eager = (shareMod as any).default ?? shareMod;
+const codec = (codecMod as any).default ?? codecMod;
+// The split is an implementation detail of loading, not of behaviour.
+const share = { ...eager, ...codec };
 const scales = (scalesMod as any).default ?? scalesMod;
 const types = (typesMod as any).default ?? typesMod;
 const instruments = (instrumentsMod as any).default ?? instrumentsMod;
@@ -175,45 +179,45 @@ test('the embed URL is the share URL — height selects the player', async () =>
 });
 
 test('a short viewport gets the mini player, a tall one gets the studio', () => {
-  const url = 'https://tjw.dev/zzfx-studio/?s=abc';
   const H = share.MINI_PLAYER_MAX_HEIGHT;
-  assert.equal(share.shouldShowMiniPlayer(url, share.DEFAULT_EMBED_HEIGHT), true);
-  assert.equal(share.shouldShowMiniPlayer(url, H), true, 'boundary is inclusive');
-  assert.equal(share.shouldShowMiniPlayer(url, H + 1), false);
-  assert.equal(share.shouldShowMiniPlayer(url, 800), false);
+  assert.equal(share.shouldShowMiniPlayer(share.DEFAULT_EMBED_HEIGHT), true);
+  assert.equal(share.shouldShowMiniPlayer(H), true, 'boundary is inclusive');
+  assert.equal(share.shouldShowMiniPlayer(H + 1), false);
+  assert.equal(share.shouldShowMiniPlayer(800), false);
 });
 
 test('the breakpoint is exactly the four-row floor', () => {
-  const url = 'https://tjw.dev/?s=abc';
   const fourRows = share.studioHeightForRows(share.MIN_USABLE_ROWS);
-  assert.equal(share.shouldShowMiniPlayer(url, fourRows), false, 'four rows must be the studio');
-  assert.equal(share.shouldShowMiniPlayer(url, fourRows - 1), true, 'below four rows must be the player');
+  assert.equal(share.shouldShowMiniPlayer(fourRows), false, 'four rows must be the studio');
+  assert.equal(share.shouldShowMiniPlayer(fourRows - 1), true, 'below four rows must be the player');
   // Eight rows is the comfortable target and is obviously the studio.
-  assert.equal(share.shouldShowMiniPlayer(url, share.STUDIO_IDEAL_HEIGHT), false);
+  assert.equal(share.shouldShowMiniPlayer(share.STUDIO_IDEAL_HEIGHT), false);
   assert.ok(share.STUDIO_IDEAL_HEIGHT > fourRows);
 });
 
 test('a phone in landscape gets the player, because the studio cannot fit a row', () => {
   // ~375 is the short edge of common phones. It is under the four-row floor,
   // so the player is the correct answer there.
-  assert.equal(share.shouldShowMiniPlayer('https://tjw.dev/?s=abc', 375), true);
+  assert.equal(share.shouldShowMiniPlayer(375), true);
   assert.ok(375 < share.studioHeightForRows(share.MIN_USABLE_ROWS));
 });
 
-test('the flag forces the mini player at any height', () => {
-  assert.equal(share.shouldShowMiniPlayer('https://tjw.dev/?s=abc&embed=1', 1080), true);
-  assert.equal(share.shouldShowMiniPlayer('https://tjw.dev/?s=abc', 1080), false);
+test('the eager module pulls in nothing from the codec', () => {
+  // Startup must not reach packing, compression or base64 — that is the whole
+  // point of the split.
+  for (const name of ['packSong', 'unpackSong', 'songToShareCode', 'songFromShareCode']) {
+    assert.equal((eager as any)[name], undefined, `${name} leaked into the eager module`);
+  }
+  // What startup does need is there.
+  for (const name of ['shareCodeFromUrl', 'shouldShowMiniPlayer', 'embedSnippet', 'loadShareCodec']) {
+    assert.equal(typeof (eager as any)[name], 'function', `${name} missing from the eager module`);
+  }
 });
 
-test('embed detection ignores absent and disabled flags', () => {
-  assert.equal(share.isEmbedUrl('https://tjw.dev/'), false);
-  assert.equal(share.isEmbedUrl('https://tjw.dev/?s=abc'), false);
-  assert.equal(share.isEmbedUrl('https://tjw.dev/?embed=0'), false);
-  assert.equal(share.isEmbedUrl('https://tjw.dev/?embed=false'), false);
-  assert.equal(share.isEmbedUrl('https://tjw.dev/?embed=1'), true);
-  assert.equal(share.isEmbedUrl('https://tjw.dev/?a=1&embed=1&b=2'), true);
-  // A hash is not a query.
-  assert.equal(share.isEmbedUrl('https://tjw.dev/#embed=1'), false);
+test('the codec loads on demand and exposes the encode and decode halves', async () => {
+  const mod: any = await eager.loadShareCodec();
+  assert.equal(typeof mod.songToShareCode, 'function');
+  assert.equal(typeof mod.songFromShareCode, 'function');
 });
 
 test('the embed snippet is a well-formed iframe', async () => {

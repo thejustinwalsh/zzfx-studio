@@ -11,7 +11,7 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { AnimatedPressable } from './AnimatedPressable';
-import { songToShareUrl, songToEmbedUrl, embedSnippet } from '../engine/share';
+import { embedSnippet, loadShareCodec, prefetchShareCodec } from '../engine/share';
 
 /** Clipboard with the execCommand fallback for browsers that refuse the API. */
 async function copyText(text: string): Promise<void> {
@@ -345,7 +345,10 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
   }, [shareState, settleShare, shareOpacity]);
 
   const handleCopyShareUrl = useCallback(
-    () => (setLastShare('link'), runShare(() => songToShareUrl(song, window.location.origin, window.location.pathname))),
+    () => (setLastShare('link'), runShare(async () => {
+      const { songToShareUrl } = await loadShareCodec();
+      return songToShareUrl(song, window.location.origin, window.location.pathname);
+    })),
     [runShare, song]
   );
 
@@ -354,6 +357,7 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
   // once the visitor presses play.
   const handleCopyEmbed = useCallback(
     () => (setLastShare('embed'), runShare(async () => {
+      const { songToEmbedUrl } = await loadShareCodec();
       const url = await songToEmbedUrl(song, window.location.origin, window.location.pathname);
       return embedSnippet(url, song.config.name || 'ZzFX Studio song');
     })),

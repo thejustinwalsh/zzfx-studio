@@ -11,9 +11,10 @@ const HEIGHT = 16;
 export const BrandTitle = React.memo(function BrandTitle() {
   const font = useFont(require('../../../assets/JetBrainsMono-Regular.ttf'), FONT_SIZE);
 
-  if (!font) return <View style={{ width: WIDTH, height: HEIGHT }} />;
-
-  let textWidth = useMemo(() => {
+  // `font` is null until it loads, so this must not sit behind an early return:
+  // the hook count would differ between the two renders.
+  const textWidth = useMemo(() => {
+    if (!font) return TEXT_WIDTH;
     try {
       const measured = font.measureText(TITLE);
       if (measured && measured.width > 0) {
@@ -21,7 +22,9 @@ export const BrandTitle = React.memo(function BrandTitle() {
       }
     } catch {}
     return TEXT_WIDTH;
-  }, [TITLE, font]);
+  }, [font]);
+
+  if (!font) return <View style={{ width: WIDTH, height: HEIGHT }} />;
   
 
   return (

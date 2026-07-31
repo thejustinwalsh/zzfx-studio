@@ -6,7 +6,7 @@ import { RetroAvatar } from '../components/RetroAvatar';
 import { BrandTitle } from '../components/BrandTitle/BrandTitle';
 import { colors, fonts, fontSize, spacing } from '../theme';
 import { AudioGraph, createRenderEngine, unlockAudio } from '../engine';
-import { shareCodeFromUrl, songFromShareCode } from '../engine/share';
+import { shareCodeFromUrl, loadShareCodec } from '../engine/share';
 import { useSongStore } from '../store';
 import { buildOscColorTable } from '../utils/oscColors';
 import type { Song } from '../engine';
@@ -50,24 +50,30 @@ export function EmbedPlayer() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [position, setPosition] = useState(0);
   const [volume, setVolume] = useState(0.8);
+  // State rather than a ref: the pre-render finishes after the first paint, and
+  // a ref update would leave the total reading 0:00 until something unrelated
+  // happened to re-render.
+  const [duration, setDuration] = useState(0);
 
   const audioRef = useRef<AudioGraph | null>(null);
   const engineRef = useRef(createRenderEngine());
   const buffersRef = useRef<Awaited<ReturnType<typeof engineRef.current.renderSongBuffers>>>([]);
   const rafRef = useRef(0);
-  const durationRef = useRef(0);
 
   useEffect(() => {
     const code = typeof window === 'undefined' ? null : shareCodeFromUrl(window.location.href);
     if (!code) { setPhase('session'); return; }
 
     let cancelled = false;
-    songFromShareCode(code).then((loaded: Song | null) => {
-      if (cancelled) return;
-      if (!loaded) { setPhase('empty'); return; }
-      setSharedSong(loaded);
-      setPhase('ready');
-    });
+    loadShareCodec()
+      .then(({ songFromShareCode }) => songFromShareCode(code))
+      .then((loaded: Song | null) => {
+        if (cancelled) return;
+        if (!loaded) { setPhase('empty'); return; }
+        setSharedSong(loaded);
+        setPhase('ready');
+      })
+      .catch(() => setPhase('empty'));
     return () => { cancelled = true; };
   }, []);
 
@@ -79,7 +85,7 @@ export function EmbedPlayer() {
     engineRef.current.renderSongBuffers(song).then((buffers) => {
       if (cancelled) return;
       buffersRef.current = buffers;
-      if (buffers[0]?.[0]) durationRef.current = buffers[0][0].length / 44100;
+      if (buffers[0]?.[0]) setDuration(buffers[0][0].length / 44100);
     });
     return () => { cancelled = true; };
   }, [song]);
@@ -151,8 +157,9 @@ export function EmbedPlayer() {
     }
     if (!buffers[0]?.[0]?.length) return;
 
-    durationRef.current = buffers[0][0].length / 44100;
-    audioRef.current.play(buffers, durationRef.current, song.config.bpm);
+    const seconds = buffers[0][0].length / 44100;
+    setDuration(seconds);
+    audioRef.current.play(buffers, seconds, song.config.bpm);
     setIsPlaying(true);
     rafRef.current = requestAnimationFrame(tick);
   }, [song, isPlaying, stop, tick, volume]);
@@ -198,7 +205,7 @@ export function EmbedPlayer() {
   }
 
   const c = song.config;
-  const progress = durationRef.current > 0 ? position / durationRef.current : 0;
+  const progress = duration > 0 ? position / duration : 0;
 
   return (
     <View style={styles.container}>
@@ -245,14 +252,16 @@ export function EmbedPlayer() {
 
         <View style={styles.timeBlock}>
           <Text style={[styles.timeBig, { fontSize: timeSize }]}>{formatTime(position)}</Text>
-          {!tiny && <Text style={styles.timeTotal}>{formatTime(durationRef.current)}</Text>}
+          {!tiny && <Text style={styles.timeTotal}>{formatTime(duration)}</Text>}
         </View>
 
+        {/* Equal spacers either side so the volume sits centred between the
+            timecode and the readouts, rather than crowding the readouts. */}
         <View style={styles.bandSpacer} />
-
         {!tiny && (
           <VolumeSlider value={volume} onChange={changeVolume} width={narrow ? 48 : 72} />
         )}
+        <View style={styles.bandSpacer} />
 
         {!narrow && !tiny && (
           <View style={styles.readouts}>

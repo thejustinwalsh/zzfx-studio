@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { AnimatedPressable } from './AnimatedPressable';
 import { PulsingView } from './PulsingView';
@@ -40,6 +41,19 @@ import type {
 } from '../engine';
 
 export const GRID_ROWS = 32;
+
+/**
+ * Where three header buttons stop fitting across four channels. Measured from
+ * the running app rather than guessed:
+ *
+ *   channel name  33.2   M S R group  58.0   column padding  4.0
+ *   (33.2 + 58 + 4) x 4 channels + 32 row-number column = 413
+ *
+ * Below it mute and solo drop out and regenerate stays, since regenerate is the
+ * only one of the three with no other route to it. A phone in portrait (390-430)
+ * therefore keeps all three; anything narrower goes compact.
+ */
+const COMPACT_HEADER_WIDTH = 413;
 const CHANNELS = 4;
 const CHANNEL_NAMES = ['LEAD', 'HARM', 'BASS', 'DRUM'];
 const CHANNEL_COLORS = [
@@ -148,6 +162,9 @@ export function PatternGrid({
   onScrollRef,
   onLayoutMetrics,
 }: PatternGridProps) {
+  const { width: viewportWidth } = useWindowDimensions();
+  const compactHeaders = viewportWidth < COMPACT_HEADER_WIDTH;
+
   const [cursor, setCursor] = useState<Cursor>({ row: 0, channel: 0, field: 'note' });
   const [focused, setFocused] = useState(false);
   const [octave, setOctave] = useState(4);
@@ -616,26 +633,30 @@ export function PatternGrid({
                     {name}
                   </Text>
                   <View style={styles.headerBtnGroup}>
-                    <AnimatedPressable
-                      onPress={() => onToggleMute(ci)}
-                      style={[styles.toggleBtn, isExplicitMuted && styles.toggleBtnMuted]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${isExplicitMuted ? 'Unmute' : 'Mute'} ${name} channel`}
-                      accessibilityState={{ selected: isExplicitMuted }}
-                    >
-                      <Text style={[styles.toggleText, isExplicitMuted && styles.toggleTextActive]}>
-                        M
-                      </Text>
-                    </AnimatedPressable>
-                    <AnimatedPressable
-                      onPress={() => onToggleSolo(ci)}
-                      style={[styles.toggleBtn, isSoloed && styles.toggleBtnSoloed]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${isSoloed ? 'Unsolo' : 'Solo'} ${name} channel`}
-                      accessibilityState={{ selected: isSoloed }}
-                    >
-                      <Text style={[styles.toggleText, isSoloed && styles.toggleTextSoloed]}>S</Text>
-                    </AnimatedPressable>
+                    {!compactHeaders && (
+                      <AnimatedPressable
+                        onPress={() => onToggleMute(ci)}
+                        style={[styles.toggleBtn, isExplicitMuted && styles.toggleBtnMuted]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${isExplicitMuted ? 'Unmute' : 'Mute'} ${name} channel`}
+                        accessibilityState={{ selected: isExplicitMuted }}
+                      >
+                        <Text style={[styles.toggleText, isExplicitMuted && styles.toggleTextActive]}>
+                          M
+                        </Text>
+                      </AnimatedPressable>
+                    )}
+                    {!compactHeaders && (
+                      <AnimatedPressable
+                        onPress={() => onToggleSolo(ci)}
+                        style={[styles.toggleBtn, isSoloed && styles.toggleBtnSoloed]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${isSoloed ? 'Unsolo' : 'Solo'} ${name} channel`}
+                        accessibilityState={{ selected: isSoloed }}
+                      >
+                        <Text style={[styles.toggleText, isSoloed && styles.toggleTextSoloed]}>S</Text>
+                      </AnimatedPressable>
+                    )}
                     <PulsingView active={renderingChannels.has(ci)}>
                       <AnimatedPressable
                         onPress={() => onRegenChannel(ci)}

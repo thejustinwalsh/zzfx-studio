@@ -42,7 +42,7 @@ import {
   codeToSong,
   baseOctaveFromFreq,
 } from './src/engine';
-import { shareCodeFromUrl, songFromShareCode, SHARE_PARAM, shouldShowMiniPlayer } from './src/engine/share';
+import { shareCodeFromUrl, SHARE_PARAM, shouldShowMiniPlayer, loadShareCodec, prefetchShareCodec } from './src/engine/share';
 import { EmbedPlayer } from './src/screens/EmbedPlayer';
 import { openTextFile } from './src/platform';
 import type { Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel } from './src/engine';
@@ -95,10 +95,7 @@ function useMiniPlayer(): boolean {
     };
   }, []);
 
-  const url = Platform.OS === 'web' && typeof window !== 'undefined'
-    ? window.location.href
-    : '';
-  return shouldShowMiniPlayer(url, height);
+  return shouldShowMiniPlayer(height);
 }
 
 /**
@@ -670,7 +667,8 @@ function Studio() {
     if (!code) return;
 
     let cancelled = false;
-    songFromShareCode(code).then((shared) => {
+    // The codec only loads because this URL carries a song.
+    loadShareCodec().then(({ songFromShareCode }) => songFromShareCode(code)).then((shared) => {
       if (cancelled || !shared) return;
       useSongStore.getState().loadSong(shared);
     }).finally(() => {
@@ -868,6 +866,9 @@ function Studio() {
                   if (song && renderEngineRef.current) {
                     exportPromiseRef.current = renderEngineRef.current.renderSongBuffers(song);
                   }
+                  // Fetch the share codec while the export screen is being
+                  // read, so the first press of share does not wait on it.
+                  prefetchShareCodec();
                   setShowExport(true);
                 }}
                 style={styles.actionBtn}
