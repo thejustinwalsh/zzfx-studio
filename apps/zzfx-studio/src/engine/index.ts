@@ -38,3 +38,7 @@ export type {
   ChannelData,
   VibeConfig,
 } from './types';
+export {
+  SHARE_PARAM, packSong, unpackSong, songToShareCode, songFromShareCode,
+  shareCodeFromUrl, songToShareUrl, isShareSupported,
+} from './share';

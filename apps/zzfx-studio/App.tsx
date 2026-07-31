@@ -42,6 +42,7 @@ import {
   codeToSong,
   baseOctaveFromFreq,
 } from './src/engine';
+import { shareCodeFromUrl, songFromShareCode, SHARE_PARAM } from './src/engine/share';
 import { openTextFile } from './src/platform';
 import type { Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel } from './src/engine';
 import type { ChannelIndex } from './src/theme/colors';
@@ -598,6 +599,26 @@ export default function App() {
     params[2] *= 2 ** ((note - 12) / 12);
     const samples = ZZFX.buildSamples(...params);
     if (samples.length > 0) zzfxP([samples]);
+  }, []);
+
+  // A shared link carries the whole song in its query string. Load it once on
+  // startup, then strip the parameter so a refresh does not keep reimporting
+  // the same song as a new project.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const code = shareCodeFromUrl(window.location.href);
+    if (!code) return;
+
+    let cancelled = false;
+    songFromShareCode(code).then((shared) => {
+      if (cancelled || !shared) return;
+      useSongStore.getState().loadSong(shared);
+    }).finally(() => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete(SHARE_PARAM);
+      window.history.replaceState({}, '', url.toString());
+    });
+    return () => { cancelled = true; };
   }, []);
 
   // Undo replaces the whole song, so every channel's audio is stale.

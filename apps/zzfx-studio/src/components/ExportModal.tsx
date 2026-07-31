@@ -7,9 +7,25 @@ import Animated, {
   withSequence,
   withTiming,
   cancelAnimation,
+  runOnJS,
   Easing,
 } from 'react-native-reanimated';
 import { AnimatedPressable } from './AnimatedPressable';
+import { songToShareUrl } from '../engine/share';
+
+/** Clipboard with the execCommand fallback for browsers that refuse the API. */
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+}
 import { colors, fonts, fontSize, spacing } from '../theme';
 import { ZZFX } from 'zzfx';
 import { ZZFXM } from '@zzfx-studio/zzfxm';
@@ -278,32 +294,64 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
     };
   }, [isPlaying, rendered, stopPlayback]);
 
-  const handleCopy = useCallback(async () => {
-    const clipCode = songToClipboard(song);
-    try {
-      await navigator.clipboard.writeText(clipCode);
-    } catch {
-      const ta = document.createElement('textarea');
-      ta.value = clipCode;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-    }
-  }, [song]);
+  const handleCopy = useCallback(() => copyText(songToClipboard(song)), [song]);
+  const handleCopyFull = useCallback(() => copyText(code), [code]);
 
-  const handleCopyFull = useCallback(async () => {
+  // Share link: the whole song packed into a URL. Packing and deflating is
+  // async, so the button runs a small state machine — spinner while it works,
+  // a green tick to confirm, then a fade back to resting. A clipboard write is
+  // invisible otherwise, and silence reads as a broken button.
+  const [shareState, setShareState] = useState<'idle' | 'working' | 'copied' | 'failed'>('idle');
+  const [spinFrame, setSpinFrame] = useState(0);
+  const shareOpacity = useSharedValue(1);
+  const shareResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // An ASCII spinner rather than a rotating glyph — it belongs to the same
+  // family as the rest of the type here.
+  useEffect(() => {
+    if (shareState !== 'working') return;
+    const id = setInterval(() => setSpinFrame((f) => f + 1), 90);
+    return () => clearInterval(id);
+  }, [shareState]);
+
+  const settleShare = useCallback((next: 'copied' | 'failed') => {
+    setShareState(next);
+    shareOpacity.value = 1;
+    if (shareResetRef.current) clearTimeout(shareResetRef.current);
+    shareResetRef.current = setTimeout(() => {
+      shareOpacity.value = withTiming(0, { duration: 220 }, (done) => {
+        if (!done) return;
+        runOnJS(setShareState)('idle');
+        shareOpacity.value = withTiming(1, { duration: 220 });
+      });
+    }, 900);
+  }, [shareOpacity]);
+
+  useEffect(() => () => {
+    if (shareResetRef.current) clearTimeout(shareResetRef.current);
+  }, []);
+
+  const handleCopyShareUrl = useCallback(async () => {
+    if (shareState === 'working') return;
+    setShareState('working');
+    shareOpacity.value = 1;
     try {
-      await navigator.clipboard.writeText(code);
+      const url = await songToShareUrl(song, window.location.origin, window.location.pathname);
+      await copyText(url);
+      settleShare('copied');
     } catch {
-      const ta = document.createElement('textarea');
-      ta.value = code;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
+      settleShare('failed');
     }
-  }, [code]);
+  }, [song, shareState, settleShare, shareOpacity]);
+
+  const shareAnimatedStyle = useAnimatedStyle(() => ({ opacity: shareOpacity.value }));
+
+  const SPINNER = ['|', '/', '-', '\\'];
+  const shareGlyph =
+    shareState === 'working' ? SPINNER[spinFrame % SPINNER.length]
+      : shareState === 'copied' ? '✓'
+      : shareState === 'failed' ? '✕'
+      : '↗';
 
   const handleDownload = useCallback(() => {
     const filename = `${(song.config.name || 'zzfx-song').toLowerCase().replace(/\s+/g, '-')}.js`;
@@ -436,6 +484,35 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
               accessibilityLabel="Export as WAV audio file"
             >
               <Text style={[styles.actionBtnText, isRendering && styles.btnDisabledText]}>EXPORT WAV</Text>
+            </AnimatedPressable>
+
+            {/* Share sits apart from the export actions — it hands someone the
+                song itself, rather than producing a file or a snippet. */}
+            <View style={styles.transportSpacer} />
+            <AnimatedPressable
+              onPress={handleCopyShareUrl}
+              style={[
+                styles.shareBtn,
+                shareState === 'copied' && styles.actionBtnDone,
+                shareState === 'failed' && styles.shareBtnFailed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={
+                shareState === 'copied'
+                  ? 'Share link copied to clipboard'
+                  : 'Copy a shareable link to this song'
+              }
+            >
+              <Animated.Text
+                style={[
+                  styles.shareBtnText,
+                  shareState === 'copied' && styles.actionBtnDoneText,
+                  shareState === 'failed' && styles.shareBtnTextFailed,
+                  shareAnimatedStyle,
+                ]}
+              >
+                {shareGlyph}
+              </Animated.Text>
             </AnimatedPressable>
           </View>
 
@@ -592,6 +669,38 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     borderWidth: 1,
     borderColor: colors.borderSubtle,
+  },
+  transportSpacer: {
+    flex: 1,
+    minWidth: spacing.sm,
+  },
+  shareBtn: {
+    width: 38,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+  },
+  shareBtnFailed: {
+    borderColor: colors.accentStop,
+  },
+  shareBtnTextFailed: {
+    color: colors.accentStop,
+  },
+  shareBtnText: {
+    fontFamily: fonts.mono,
+    fontSize: 15,
+    lineHeight: 17,
+    color: colors.textSecondary,
+    fontWeight: '700',
+  },
+  actionBtnDone: {
+    borderColor: colors.accentPlay,
+    backgroundColor: 'rgba(34, 197, 94, 0.15)',
+  },
+  actionBtnDoneText: {
+    color: colors.accentPlay,
   },
   actionBtnText: {
     fontFamily: fonts.mono,
