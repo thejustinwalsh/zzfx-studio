@@ -72,6 +72,13 @@ function pickWeighted<T extends { weight: number }>(items: T[]): T {
   return items[items.length - 1];
 }
 
+// ZzFXM reserves note value 0 as the rest sentinel, so C at octave 3 —
+// which encodes to exactly 0 — would voice as silence instead of a pitch.
+// Raise any voicing that lands there by an octave.
+function lift(note: number): number {
+  return note > 0 ? note : note + 12;
+}
+
 // Build a triad from a scale degree
 function buildChord(
   degree: number,
@@ -102,12 +109,12 @@ function buildChord(
   const fifthOctaveAdj = fifthChromatic < chordRootChromatic ? 1 : 0;
 
   return {
-    root: noteToZzfxm(chordRootChromatic, bassOctave),
-    third: noteToZzfxm(thirdChromatic, bassOctave + thirdOctaveAdj),
-    fifth: noteToZzfxm(fifthChromatic, bassOctave + fifthOctaveAdj),
-    rootMelody: noteToZzfxm(chordRootChromatic, melodyOctave),
-    thirdMelody: noteToZzfxm(thirdChromatic, melodyOctave + thirdOctaveAdj),
-    fifthMelody: noteToZzfxm(fifthChromatic, melodyOctave + fifthOctaveAdj),
+    root: lift(noteToZzfxm(chordRootChromatic, bassOctave)),
+    third: lift(noteToZzfxm(thirdChromatic, bassOctave + thirdOctaveAdj)),
+    fifth: lift(noteToZzfxm(fifthChromatic, bassOctave + fifthOctaveAdj)),
+    rootMelody: lift(noteToZzfxm(chordRootChromatic, melodyOctave)),
+    thirdMelody: lift(noteToZzfxm(thirdChromatic, melodyOctave + thirdOctaveAdj)),
+    fifthMelody: lift(noteToZzfxm(fifthChromatic, melodyOctave + fifthOctaveAdj)),
   };
 }
 

@@ -49,3 +49,6 @@ packages/*/dist/
 /ios
 /android
 .claude/settings.local.json
+
+# Local dev-server launch config
+.claude/launch.json

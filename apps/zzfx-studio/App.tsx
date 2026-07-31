@@ -12,16 +12,17 @@ import {
   Oscilloscope,
   InstrumentCard,
   SequenceMatrix,
+  PatternGrid,
   ExportModal,
   LoadModal,
   BrandTitle,
   RetroAvatar,
-  PulsingView,
   UpdateBanner,
   computeBarColors,
   prefetchHighlighter,
 } from './src/components';
 import type { ChannelNote, RGB } from './src/components';
+import type { NoteEffect } from './src/engine';
 import {
   generateSong,
   regenerateForVibe,
@@ -34,9 +35,6 @@ import {
   zzfxP,
   unlockAudio,
   AudioGraph,
-  zzfxmToNoteName,
-  drumNoteToName,
-  effectToDisplayString,
   CHROMATIC,
   SCALES,
   VIBE_CONFIG,
@@ -57,8 +55,6 @@ const VIBE_OPTIONS: VibeName[] = ['adventure', 'battle', 'dungeon', 'titleScreen
 const KEY_OPTIONS: NoteName[] = [...CHROMATIC];
 const SCALE_OPTIONS: ScaleName[] = Object.keys(SCALES) as ScaleName[];
 const LENGTH_OPTIONS: SongLength[] = ['short', 'long', 'epic'];
-const CHANNEL_NAMES = ['LEAD', 'HARM', 'BASS', 'DRUM'];
-const CHANNEL_COLORS = [colors.ch0Primary, colors.ch1Primary, colors.ch2Primary, colors.ch3Primary];
 
 // Initialize store after hydration (generates random song if none persisted)
 initializeStore();
@@ -530,6 +526,63 @@ export default function App() {
     }
   }, []);
 
+  // --- Pattern editing -----------------------------------------------------
+
+  // A drag fires an edit every 12px, so collapse the burst into one render.
+  const editTimersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+
+  const scheduleChannelRerender = useCallback((channelIndex: number) => {
+    const timers = editTimersRef.current;
+    const existing = timers.get(channelIndex);
+    if (existing) clearTimeout(existing);
+
+    timers.set(channelIndex, setTimeout(() => {
+      timers.delete(channelIndex);
+      const currentSong = useSongStore.getState().song;
+      if (!currentSong) return;
+
+      renderEngineRef.current.renderSongBuffers(currentSong).then(buffers => {
+        if (buffers.length === 0 || buffers[0][0].length === 0) return;
+        channelBuffersRef.current[channelIndex] = buffers[channelIndex];
+        // Only hot-swap while playing; otherwise the buffers are just staged
+        // for the next play.
+        if (audioGraphRef.current?.isPlaying) {
+          audioGraphRef.current.replaceChannel(channelIndex, buffers[channelIndex]);
+        } else {
+          channelBuffersRef.current = buffers;
+        }
+      });
+    }, 120));
+  }, []);
+
+  useEffect(() => {
+    const timers = editTimersRef.current;
+    return () => {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
+
+  const handleSetNote = useCallback((channelIndex: number, row: number, note: number) => {
+    useSongStore.getState().setNote(activePattern, channelIndex, row, note);
+  }, [activePattern]);
+
+  const handleSetEffect = useCallback((channelIndex: number, row: number, effect: NoteEffect | null) => {
+    useSongStore.getState().setEffect(activePattern, channelIndex, row, effect);
+  }, [activePattern]);
+
+  // Sound a single note through its channel's instrument. Only called when
+  // playback is stopped — during playback the swapped buffer delivers the edit.
+  const handleAuditionNote = useCallback((channelIndex: number, note: number) => {
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong || note <= 0) return;
+    unlockAudio();
+    const params = [...currentSong.instruments[channelIndex]];
+    params[2] *= 2 ** ((note - 12) / 12);
+    const samples = ZZFX.buildSamples(...params);
+    if (samples.length > 0) zzfxP([samples]);
+  }, []);
+
   const handlePreviewInstrument = useCallback((channelIndex: number) => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong) return;
@@ -576,7 +629,6 @@ export default function App() {
 
   // Grid scroll measurement refs
   const gridScrollHeight = useRef(0);
-  const gridContentHeight = useRef(0);
 
   // Scroll grid after React renders the new cursor position, before browser paints
   useLayoutEffect(() => {
@@ -838,142 +890,33 @@ export default function App() {
 
       {/* Pattern Data Grid */}
       {currentPattern ? (
-        <ScrollView
-          ref={gridScrollRef}
-          style={styles.gridContainer}
-          stickyHeaderIndices={[0]}
-          onLayout={(e) => { gridScrollHeight.current = e.nativeEvent.layout.height; }}
-          onContentSizeChange={(_w, h) => { gridContentHeight.current = h; }}
-        >
-          {/* Channel Headers with Regen */}
-          <View style={styles.gridHeader} onLayout={(e) => { gridHeaderHeight.current = e.nativeEvent.layout.height; }}>
-            <View style={styles.rowNumCol}>
-              <Text style={styles.headerText}>ROW</Text>
-            </View>
-            {CHANNEL_NAMES.map((name, ci) => {
-              const isMuted = effectiveMutes.has(ci);
-              const isSoloed = soloChannel === ci;
-              const isExplicitMuted = mutedChannels.includes(ci);
-              return (
-                <View key={name} style={styles.channelCol}>
-                  <View style={styles.channelHeaderRow}>
-                    <Text style={[
-                      styles.headerText,
-                      { color: isMuted ? colors.textDim : CHANNEL_COLORS[ci] },
-                    ]}>
-                      {name}
-                    </Text>
-                    <View style={styles.headerBtnGroup}>
-                      <AnimatedPressable
-                        onPress={() => toggleMute(ci)}
-                        style={[
-                          styles.toggleBtn,
-                          isExplicitMuted && styles.toggleBtnMuted,
-                        ]}
-                        accessibilityRole="button"
-                        accessibilityLabel={`${isExplicitMuted ? 'Unmute' : 'Mute'} ${name} channel`}
-                        accessibilityState={{ selected: isExplicitMuted }}
-                      >
-                        <Text style={[
-                          styles.toggleText,
-                          isExplicitMuted && styles.toggleTextActive,
-                        ]}>M</Text>
-                      </AnimatedPressable>
-                      <AnimatedPressable
-                        onPress={() => toggleSolo(ci)}
-                        style={[
-                          styles.toggleBtn,
-                          isSoloed && styles.toggleBtnSoloed,
-                        ]}
-                        accessibilityRole="button"
-                        accessibilityLabel={`${isSoloed ? 'Unsolo' : 'Solo'} ${name} channel`}
-                        accessibilityState={{ selected: isSoloed }}
-                      >
-                        <Text style={[
-                          styles.toggleText,
-                          isSoloed && styles.toggleTextSoloed,
-                        ]}>S</Text>
-                      </AnimatedPressable>
-                      <PulsingView active={renderingChannels.has(ci)}>
-                        <AnimatedPressable
-                          onPress={() => handleRegenChannel(ci)}
-                          disabled={renderingChannels.has(ci)}
-                          style={[
-                            styles.regenBtn,
-                            flashChannels.has(ci) && styles.regenFlash,
-                          ]}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Regenerate ${name} channel`}
-                        >
-                          <Text style={styles.regenText}>R</Text>
-                        </AnimatedPressable>
-                      </PulsingView>
-                    </View>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-
-          {/* Grid Rows */}
-          {Array.from({ length: 32 }, (_, row) => {
-            const isBeat = row % 8 === 0;
-            const isCursor = row === playbackRow;
-            return (
-              <View
-                key={row}
-                onLayout={row === 0 ? (e) => { gridRowHeight.current = e.nativeEvent.layout.height; } : undefined}
-                style={[
-                  styles.gridRow,
-                  isBeat && styles.gridRowBeat,
-                  row % 2 === 0 && styles.gridRowAlt,
-                  isCursor && styles.gridRowCursor,
-                ]}
-              >
-                <View style={styles.rowNumCol}>
-                  <Text style={[
-                    styles.rowNum,
-                    isBeat && styles.rowNumBeat,
-                    isCursor && styles.rowNumCursor,
-                  ]}>
-                    {row.toString(16).toUpperCase().padStart(2, '0')}
-                  </Text>
-                </View>
-                {currentPattern.map((channel, ci) => {
-                  const noteVal = channel[row + 2];
-                  const noteName = ci === 3
-                    ? drumNoteToName(noteVal)
-                    : zzfxmToNoteName(noteVal);
-                  const fx = currentEffects?.[ci]?.[row];
-                  const fxStr = effectToDisplayString(fx);
-                  const isFlashing = flashChannels.has(ci);
-                  const noteColor = noteVal > 0
-                    ? (effectiveMutes.has(ci) ? colors.textDim : CHANNEL_COLORS[ci])
-                    : colors.textDim;
-                  return (
-                    <View
-                      key={ci}
-                      style={[
-                        styles.channelCol,
-                        isFlashing && styles.channelFlash,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.noteText,
-                          isCursor && noteVal > 0 && styles.noteTextCursor,
-                        ]}
-                      >
-                        <Text style={{ color: noteColor }}>{noteName}</Text>
-                        <Text style={{ color: fx ? noteColor : colors.textDim }}>{` ${fxStr}`}</Text>
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-            );
-          })}
-        </ScrollView>
+        <PatternGrid
+          pattern={currentPattern}
+          effects={currentEffects}
+          patternLabel={activePattern}
+          songKey={song!.config.key}
+          scale={song!.config.scale}
+          playbackRow={playbackRow}
+          mutedChannels={effectiveMutes}
+          explicitMutes={mutedChannels}
+          soloChannel={soloChannel}
+          renderingChannels={renderingChannels}
+          flashChannels={flashChannels}
+          onToggleMute={toggleMute}
+          onToggleSolo={toggleSolo}
+          onRegenChannel={handleRegenChannel}
+          onSetNote={handleSetNote}
+          onSetEffect={handleSetEffect}
+          onEdit={scheduleChannelRerender}
+          onAudition={handleAuditionNote}
+          isPlaying={isPlaying}
+          onScrollRef={(r) => { gridScrollRef.current = r; }}
+          onLayoutMetrics={(m) => {
+            gridRowHeight.current = m.rowHeight;
+            gridHeaderHeight.current = m.headerHeight;
+            gridScrollHeight.current = m.viewportHeight;
+          }}
+        />
       ) : null}
 
       {/* Load Modal */}
@@ -1128,128 +1071,5 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: colors.borderSubtle,
-  },
-  gridContainer: {
-    flex: 1,
-    paddingHorizontal: spacing.md,
-  },
-  gridHeader: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderTrack,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.bgPrimary,
-    zIndex: 1,
-  },
-  rowNumCol: {
-    width: 36,
-    paddingHorizontal: spacing.xs,
-  },
-  channelCol: {
-    flex: 1,
-    paddingHorizontal: spacing.xs,
-  },
-  channelHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 3,
-  },
-  headerText: {
-    fontFamily: fonts.mono,
-    fontSize: fontSize.trackHeader,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    letterSpacing: 0.5,
-  },
-  headerBtnGroup: {
-    flexDirection: 'row',
-    gap: 2,
-    alignItems: 'center',
-  },
-  toggleBtn: {
-    width: 18,
-    height: 18,
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-    borderWidth: 1,
-    borderColor: colors.borderSubtle,
-  },
-  toggleBtnMuted: {
-    borderColor: colors.accentStop,
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
-  },
-  toggleBtnSoloed: {
-    borderColor: colors.accentPlay,
-    backgroundColor: 'rgba(34, 197, 94, 0.15)',
-  },
-  toggleText: {
-    fontFamily: fonts.mono,
-    fontSize: 9,
-    fontWeight: '700',
-    color: colors.textDim,
-  },
-  toggleTextActive: {
-    color: colors.accentStop,
-  },
-  toggleTextSoloed: {
-    color: colors.accentPlay,
-  },
-  regenBtn: {
-    width: 18,
-    height: 18,
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-    borderWidth: 1,
-    borderColor: colors.accentGenerate,
-  },
-  regenText: {
-    fontFamily: fonts.mono,
-    fontSize: 9,
-    color: colors.accentGenerate,
-    fontWeight: '700',
-  },
-  regenFlash: {
-    backgroundColor: colors.accentGenerate,
-    borderColor: colors.accentGenerate,
-  },
-  gridRow: {
-    flexDirection: 'row',
-    paddingVertical: 1,
-    backgroundColor: colors.bgGridRow,
-  },
-  gridRowAlt: {
-    backgroundColor: colors.bgGridRowAlt,
-  },
-  gridRowBeat: {
-    backgroundColor: colors.bgGridBeat,
-  },
-  gridRowCursor: {
-    backgroundColor: colors.bgCursor,
-    borderLeftWidth: 2,
-    borderLeftColor: colors.accentPrimary,
-  },
-  rowNum: {
-    fontFamily: fonts.mono,
-    fontSize: fontSize.gridRowNum,
-    color: colors.textDim,
-  },
-  rowNumBeat: {
-    color: colors.textSecondary,
-  },
-  rowNumCursor: {
-    color: colors.accentPrimary,
-    fontWeight: '700',
-  },
-  noteText: {
-    fontFamily: fonts.mono,
-    fontSize: fontSize.gridNote,
-    paddingHorizontal: 3,
-  },
-  noteTextCursor: {
-    fontWeight: '700',
-  },
-  channelFlash: {
-    backgroundColor: 'rgba(168, 85, 247, 0.15)',
   },
 });

@@ -190,9 +190,19 @@ Drum ranges follow `drumNoteToName`: KCK 1–6, SNR 7–22, HAT 23–48. Vertica
 nudges within the current drum's range, giving pitch variation without exposing
 raw numbers.
 
-Implemented with `PanResponder`, which works on both react-native-web and
-native. `react-native-gesture-handler` is not a dependency and is not worth
-adding for this.
+Implemented with pointer events (`onPointerDown` / `Move` / `Up`) plus
+`setPointerCapture`, not `PanResponder`. The grid lives inside a `ScrollView`,
+and the gesture responder system awards vertical gestures to the scroller before
+they reach a child — horizontal drags worked and vertical ones silently did
+nothing. Pointer capture cannot be stolen, and `clientX/clientY` deltas are
+exact CSS pixels. `react-native-gesture-handler` is not a dependency and is not
+worth adding for this.
+
+Steps are measured from the note the drag started on rather than accumulated, so
+dragging back to the origin restores the original value.
+
+A wheel is not a drag, so pointer devices keep normal scrolling while drag
+editing is on; only touch has to trade one for the other.
 
 ## Audio and persistence
 

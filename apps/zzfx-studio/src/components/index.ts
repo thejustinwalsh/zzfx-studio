@@ -9,6 +9,7 @@ export { Oscilloscope, computeBarColors } from './Oscilloscope';
 export type { ChannelNote, RGB } from './Oscilloscope';
 export { InstrumentCard } from './InstrumentCard';
 export { SequenceMatrix } from './SequenceMatrix';
+export { PatternGrid, GRID_ROWS } from './PatternGrid';
 export { ExportModal, prefetchHighlighter } from './ExportModal';
 export { LoadModal } from './LoadModal';
 export { BrandTitle } from './BrandTitle/BrandTitle';

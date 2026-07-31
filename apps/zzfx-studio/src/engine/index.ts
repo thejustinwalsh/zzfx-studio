@@ -2,8 +2,13 @@ export { generateSong, regenerateForVibe, regenerateAllPatterns, regenerateWithN
 export { generateInstruments } from './instruments';
 export { zzfxP, ZZFXM, zzfxm, zzfxMChannels, unlockAudio, getAnalyser } from './zzfx';
 export { AudioGraph } from './audioGraph';
-export { CHROMATIC, SCALES, getScaleNotes, zzfxmToNoteName } from './scales';
-export { drumNoteToName, DRUM_NOTES, effectToDisplayString } from './types';
+export { CHROMATIC, SCALES, getScaleNotes, zzfxmToNoteName, noteToZzfxm } from './scales';
+export {
+  MIN_NOTE, MAX_NOTE, MIN_OCTAVE, MAX_OCTAVE, REST, DRUM_RANGES,
+  isNoteLetter, isDrumLetter, letterToNote, drumFromLetter,
+  scaleStep, octaveStep, cycleDrum, nudgeDrum, clampNote, clampOctave,
+} from './noteEntry';
+export { drumNoteToName, DRUM_NOTES, EFFECT_CODES, effectToDisplayString } from './types';
 export { euclidean } from './euclidean';
 export { VIBE_CONFIG, getRandomBpm } from './vibes';
 export { generateChordProgression } from './chords';

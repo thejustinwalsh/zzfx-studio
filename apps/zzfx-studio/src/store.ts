@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel } from './engine';
+import type { Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel, Pattern, PatternEffects, NoteEffect } from './engine';
 import { generateSong, generateSongName, VIBE_CONFIG, CHROMATIC, SCALES } from './engine';
 
 function pick<T>(arr: readonly T[]): T {
@@ -53,6 +53,10 @@ interface SongState {
   setActivePattern: (p: PatternLabel) => void;
   setMutedChannels: (chs: number[] | ((prev: number[]) => number[])) => void;
   setSoloChannel: (ch: number | null) => void;
+
+  // Pattern editing
+  setNote: (pattern: PatternLabel, channel: number, row: number, note: number) => void;
+  setEffect: (pattern: PatternLabel, channel: number, row: number, effect: NoteEffect | null) => void;
 
   // Compound actions
   renameSong: (name: string) => void;
@@ -122,6 +126,41 @@ export const useSongStore = create<SongState>()(
         return syncToProject({ mutedChannels }, s);
       }),
       setSoloChannel: (soloChannel) => set((s) => syncToProject({ soloChannel }, s)),
+
+      // Note values live at index row+2 — ChannelData is [instrument, pan, ...notes].
+      setNote: (pattern, channel, row, note) => set((s) => {
+        if (!s.song) return {};
+        const existing = s.song.patterns[pattern];
+        if (!existing) return {};
+
+        const channels = [...existing] as Pattern;
+        const data = [...channels[channel]];
+        data[row + 2] = note;
+        channels[channel] = data;
+
+        const song = {
+          ...s.song,
+          patterns: { ...s.song.patterns, [pattern]: channels },
+        };
+        return syncToProject({ song }, s);
+      }),
+
+      setEffect: (pattern, channel, row, effect) => set((s) => {
+        if (!s.song) return {};
+        const existing = s.song.patternEffects[pattern];
+        if (!existing) return {};
+
+        const channels = [...existing] as PatternEffects;
+        const data = [...channels[channel]];
+        data[row] = effect;
+        channels[channel] = data;
+
+        const song = {
+          ...s.song,
+          patternEffects: { ...s.song.patternEffects, [pattern]: channels },
+        };
+        return syncToProject({ song }, s);
+      }),
 
       renameSong: (name) => set((s) => {
         if (!s.song) return {};
