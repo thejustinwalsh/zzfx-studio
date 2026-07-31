@@ -5,6 +5,25 @@
 > Branch: claude/tracker-note-entry-def3a5
 > PR: https://github.com/thejustinwalsh/zzfx-studio/pull/7
 
+### d8354a5f7a694c6e14786ad895777ff9962a98c4
+fix: address review on #7
+Stale song snapshots: the regenerate handlers read the song, awaited a render,
+then committed -- overwriting any edit made during the render, and recording
+the overwrite in the undo history as though the user had done it. They commit
+before rendering now, matching how note edits already worked.
+
+Also: the global Ctrl/Cmd+Z no longer steals undo from the song-name field; an
+unmount mid-drag closes its undo transaction instead of folding the next edit
+into it; drumVoiceInstrument pads short arrays rather than leaving holes ZzFX
+reads as undefined; the embed snippet escapes the title and URL; unpackSong
+constrains the decoded shape and caps the inflated payload; setEffect skips a
+write that changes nothing; failed clipboard copies are reported; and two
+share tests that accepted every outcome now assert a shape.
+
+Split out of the MIDI branch so this PR carries its own review fixes.
+Files: apps/zzfx-studio/App.tsx, apps/zzfx-studio/package.json, apps/zzfx-studio/src/components/ExportModal.tsx, apps/zzfx-studio/src/components/HelpModal.tsx, apps/zzfx-studio/src/components/PatternGrid.tsx, apps/zzfx-studio/src/engine/instruments.ts, apps/zzfx-studio/src/engine/share.ts, apps/zzfx-studio/src/engine/shareCodec.ts, apps/zzfx-studio/src/store.ts, apps/zzfx-studio/test/share.test.ts, pnpm-lock.yaml
+Stats: 11 files changed, 141 insertions(+), 65 deletions(-)
+
 ### b3633a8d0f252e56ed717de135f15a600131a9c1
 fix: kick, snare and hat were the same sound
 All three drums were one shape-4 instrument differing only in note value,
