@@ -10,13 +10,21 @@ import { colors } from '../theme';
  * interface has no icon set and pulling one in for a single glyph would be a
  * heavier dependency than the drawing.
  */
+/**
+ * The ring's stroke. Absolutely positioned children are laid out from the
+ * padding box, inside the border, so every offset below is measured from there
+ * rather than from the icon's outer edge — leave it out and the whole arc sits
+ * a stroke's width right of and below centre.
+ */
+const BORDER = 1.5;
+
 export function MidiIcon({ size = 22, color = colors.textSecondary }: { size?: number; color?: string }) {
   const ring = size;
   const pin = Math.max(2, Math.round(size * 0.13));
   // Pins sit on an arc rather than a full circle, which is what distinguishes a
   // DIN socket from a generic dotted circle.
   const radius = size * 0.28;
-  const centre = ring / 2 - pin / 2;
+  const centre = ring / 2 - pin / 2 - BORDER;
 
   // Left, upper-left, top, upper-right, right.
   const angles = [180, 135, 90, 45, 0];
@@ -51,8 +59,8 @@ export function MidiIcon({ size = 22, color = colors.textSecondary }: { size?: n
             width: size * 0.34,
             height: Math.max(1.5, size * 0.07),
             backgroundColor: color,
-            left: ring / 2 - size * 0.17,
-            top: ring - size * 0.3,
+            left: ring / 2 - size * 0.17 - BORDER,
+            top: ring - size * 0.3 - BORDER,
           },
         ]}
       />
@@ -62,7 +70,7 @@ export function MidiIcon({ size = 22, color = colors.textSecondary }: { size?: n
 
 const styles = StyleSheet.create({
   ring: {
-    borderWidth: 1.5,
+    borderWidth: BORDER,
     position: 'relative',
   },
   pin: {

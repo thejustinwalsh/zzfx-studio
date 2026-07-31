@@ -44,6 +44,8 @@ import {
   VIBE_CONFIG,
   codeToSong,
   baseOctaveFromFreq,
+  drumVoiceInstrument,
+  drumVoiceOf,
 } from './src/engine';
 import { shareCodeFromUrl, SHARE_PARAM, shouldShowMiniPlayer, loadShareCodec, prefetchShareCodec } from './src/engine/share';
 import { loadMidi } from './src/engine/midiLoader';
@@ -64,6 +66,9 @@ const VIBE_OPTIONS: VibeName[] = ['adventure', 'battle', 'dungeon', 'titleScreen
 const KEY_OPTIONS: NoteName[] = [...CHROMATIC];
 const SCALE_OPTIONS: ScaleName[] = Object.keys(SCALES) as ScaleName[];
 const LENGTH_OPTIONS: SongLength[] = ['short', 'long', 'epic'];
+
+/** Drums live on channel 3, and are the one channel whose notes pick a voice. */
+const DRUM_CHANNEL = 3;
 
 /**
  * Which of the two apps this bundle is right now.
@@ -699,7 +704,14 @@ function Studio() {
     const currentSong = useSongStore.getState().song;
     if (!currentSong || note <= 0) return;
     unlockAudio();
-    const params = [...currentSong.instruments[channelIndex]];
+    // The drum channel is three instruments, not three pitches of one: playback
+    // routes each note through drumVoiceInstrument before the pitch shift.
+    // Skipping that here played the base noise instrument instead, so KCK, SNR
+    // and HAT all sounded alike and none of them matched the song.
+    const base = currentSong.instruments[channelIndex];
+    const params = channelIndex === DRUM_CHANNEL
+      ? drumVoiceInstrument(base, drumVoiceOf(note))
+      : [...base];
     params[2] *= 2 ** ((note - 12) / 12);
     const samples = ZZFX.buildSamples(...params);
     if (samples.length > 0) zzfxP([samples]);

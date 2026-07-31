@@ -3,14 +3,16 @@ import assert from 'node:assert/strict';
 
 import * as noteEntryMod from '../src/engine/noteEntry';
 import * as scalesMod from '../src/engine/scales';
-import * as chordsMod from '../src/engine/chords';
+import * as instrumentsMod from '../src/engine/instruments';
 import * as typesMod from '../src/engine/types';
+import * as chordsMod from '../src/engine/chords';
 
 // tsx transpiles to CJS interop, so named exports land under `default`.
 const ne = (noteEntryMod as any).default ?? noteEntryMod;
 const scales = (scalesMod as any).default ?? scalesMod;
-const chords = (chordsMod as any).default ?? chordsMod;
+const instruments = (instrumentsMod as any).default ?? instrumentsMod;
 const types = (typesMod as any).default ?? typesMod;
+const chords = (chordsMod as any).default ?? chordsMod;
 
 const KEYS = scales.CHROMATIC;
 const SCALE_NAMES = Object.keys(scales.SCALES);
@@ -273,4 +275,39 @@ test('regression: bass voicings never encode to the rest sentinel', () => {
     }
   }
   assert.deepEqual(offenders, []);
+});
+
+// --- drum voices ------------------------------------------------------------
+
+test('a drum note picks the same voice everywhere it is asked', () => {
+  // Playback and audition each map a note to a voice. They lived in separate
+  // copies, drifted, and every audition played the base noise instrument.
+  const cases: [number, string][] = [
+    [1, 'KICK'], [6, 'KICK'],
+    [7, 'SNARE'], [14, 'SNARE'], [22, 'SNARE'],
+    [23, 'HAT'], [32, 'HAT'], [48, 'HAT'],
+  ];
+  for (const [note, voice] of cases) {
+    assert.equal(instruments.drumVoiceOf(note), voice, `note ${note}`);
+  }
+});
+
+test('the voice lookup agrees with the name shown in the grid', () => {
+  const NAME_TO_VOICE: Record<string, string> = { KCK: 'KICK', SNR: 'SNARE', HAT: 'HAT' };
+  for (let note = 1; note <= 48; note++) {
+    assert.equal(
+      instruments.drumVoiceOf(note),
+      NAME_TO_VOICE[types.drumNoteToName(note)],
+      `note ${note} is labelled ${types.drumNoteToName(note)}`
+    );
+  }
+});
+
+test('each voice produces an audibly different instrument', () => {
+  // The bug this guards: all three were the same broadband noise burst.
+  const base = [0.8, 0, 350, 0, 0.01, 0.08, 4, 1, -8, 0, 0, 0, 0, 0.5, 0, 0, 0, 0.05, 0.04, 0];
+  const freq = (voice: string) => instruments.drumVoiceInstrument(base, voice)[2];
+  assert.ok(freq('KICK') < freq('SNARE'), 'the kick should sit below the snare');
+  assert.ok(freq('SNARE') < freq('HAT'), 'the snare should sit below the hat');
+  assert.ok(freq('HAT') / freq('KICK') > 4, 'the three voices are too close to tell apart');
 });

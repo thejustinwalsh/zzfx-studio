@@ -11,7 +11,7 @@ import {
   VibeName,
 } from './types';
 import { VIBE_CONFIG, getRandomBpm } from './vibes';
-import { generateInstruments, drumVoiceInstrument } from './instruments';
+import { generateInstruments, drumVoiceInstrument, drumVoiceOf } from './instruments';
 import type { DrumVoice } from './instruments';
 import { generateDrumPattern } from './drums';
 import { generateBassPattern } from './bass';
@@ -350,13 +350,6 @@ interface ExpandedSong {
 }
 
 const DRUM_CHANNEL = 3;
-
-/** Which drum a note on the drum channel is, matching drumNoteToName's ranges. */
-function drumVoiceOf(note: number): DrumVoice {
-  if (note <= 6) return 'KICK';
-  if (note <= 22) return 'SNARE';
-  return 'HAT';
-}
 
 /**
  * Identifies the instrument a note needs.

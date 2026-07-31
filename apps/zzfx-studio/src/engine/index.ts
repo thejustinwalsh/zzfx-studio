@@ -1,5 +1,5 @@
 export { generateSong, regenerateForVibe, regenerateAllPatterns, regenerateWithNewLength, regeneratePattern, regenerateChannel, songToZzfxm, renderSongBuffers } from './song';
-export { generateInstruments, drumVoiceInstrument } from './instruments';
+export { generateInstruments, drumVoiceInstrument, drumVoiceOf } from './instruments';
 export type { DrumVoice } from './instruments';
 export { zzfxP, ZZFXM, zzfxm, zzfxMChannels, unlockAudio, getAnalyser } from './zzfx';
 export { AudioGraph } from './audioGraph';

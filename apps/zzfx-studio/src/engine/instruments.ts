@@ -396,6 +396,22 @@ export type DrumVoice = 'KICK' | 'SNARE' | 'HAT';
 const KICK_DROP = 0.25;
 const KICK_DROP_AT = 0.012;
 
+/**
+ * Which drum a note on the drum channel is.
+ *
+ * Lives beside drumVoiceInstrument because every caller of one needs the other:
+ * a note picks a voice, and the voice picks an instrument. Kept apart, playback
+ * and audition drifted — audition pitch-shifted the base noise instrument and
+ * so played the same sound for all three.
+ *
+ * Ranges match drumNoteToName in types.ts.
+ */
+export function drumVoiceOf(note: number): DrumVoice {
+  if (note <= 6) return 'KICK';
+  if (note <= 22) return 'SNARE';
+  return 'HAT';
+}
+
 export function drumVoiceInstrument(base: ZzFXSound, voice: DrumVoice): ZzFXSound {
   // Assigning past the end of a short array leaves holes, and ZzFX reads those
   // as undefined rather than 0. Pad to the full parameter count first.
