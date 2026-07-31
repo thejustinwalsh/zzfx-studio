@@ -296,7 +296,10 @@ test('KEYS ascends left to right then upward within a quadrant', () => {
   assert.ok(table[lp.padIndex(2, 1)] > table[lp.padIndex(1, 4)], 'the row wrap went backwards');
 });
 
-test('KEYS gives the four quadrants the same degrees, so they play in unison', () => {
+test('the quadrants hold the same note values, so each plays in its own register', () => {
+  // A note value is relative to its channel's tuning, so identical tables mean
+  // the same pad sounds an octave lower on the C3-tuned bass than on the lead.
+  // That is the split we want, not a bug — the bass part belongs down there.
   const table = lp.buildKeysLayout('C', 'major');
   for (let row = 1; row <= 4; row++) {
     for (let col = 1; col <= 4; col++) {

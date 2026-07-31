@@ -215,9 +215,17 @@ const QUADRANT_SIZE = 4;
  * KEYS — each quadrant is sixteen scale degrees for its channel.
  *
  * Degrees ascend left to right then upward, so higher pitch is higher on the
- * grid, matching the tracker itself. Values are ZzFXM notes in the standard
- * C4 tuning; a channel tuned elsewhere (bass sits at C3) shifts at send time,
- * exactly as MIDI input does.
+ * grid, matching the tracker itself.
+ *
+ * All four quadrants hold the same ZzFXM note values, which is deliberate: a
+ * note value is relative to its channel's own tuning, so the same pad sounds an
+ * octave lower on the bass than on the lead. That is the point of a split — you
+ * want the bass part in the bass register — and it is how the grid already
+ * behaves when you type the same note into two channels.
+ *
+ * Note 0 is ZzFXM's rest sentinel, so a C3 tonic is unrepresentable on a
+ * C4-tuned channel and getScaleNotes drops it; the quadrant simply starts a
+ * degree higher. A C3-tuned channel reaches its own C3 normally.
  *
  * Allocates one table per key or scale change, never per frame.
  */
@@ -310,6 +318,18 @@ export function sessionPad(channel: number, pattern: number): number | null {
 const FRAME_CAPACITY = SYSEX_HEADER.length + 1 + 81 * 5 + 1;
 
 /**
+ * Anything a frame can be written to.
+ *
+ * `MIDIOutput.send` accepts any byte sequence, but this TS DOM lib types the
+ * parameter as `number[]` alone, which a typed array is not assignable to.
+ * Declaring the shape we actually rely on keeps the cast at the boundary
+ * instead of scattered through the call sites — and lets tests pass a spy.
+ */
+export interface MidiSink {
+  send(data: Uint8Array | number[], timestamp?: number): void;
+}
+
+/**
  * The LED surface, and the SysEx frame that carries changes to it.
  *
  * One buffer and two Int32Arrays for the life of the session. `set` writes the
@@ -394,7 +414,7 @@ export class LedSurface {
   }
 
   /** Flush and transmit, if anything moved. */
-  send(port: { send(data: Uint8Array): void }): boolean {
+  send(port: MidiSink): boolean {
     const n = this.flush();
     if (n === 0) return false;
     port.send(this.bytes.subarray(0, n));
