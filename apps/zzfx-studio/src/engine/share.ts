@@ -78,9 +78,13 @@ export function embedSnippet(
   width: number = DEFAULT_EMBED_WIDTH,
   height: number = DEFAULT_EMBED_HEIGHT
 ): string {
-  const safe = title.replace(/"/g, '&quot;');
+  // This string is pasted straight into someone's page, so every interpolated
+  // value is escaped — a song name is user input and the URL is built from it.
+  const esc = (v: string) =>
+    v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const safe = esc(title);
   return (
-    `<iframe src="${url}" width="${width}" height="${height}" frameborder="0" ` +
+    `<iframe src="${esc(url)}" width="${width}" height="${height}" frameborder="0" ` +
     `allow="autoplay" loading="lazy" title="${safe}"></iframe>`
   );
 }

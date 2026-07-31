@@ -525,12 +525,9 @@ function Studio() {
     stopPlayback();
   }, [stopPlayback]);
 
-  const previewParams = useCallback((instrument: number[], channelIndex: number) => {
+  const previewParams = useCallback((instrument: number[]) => {
     unlockAudio();
     const params = [...instrument];
-    if (channelIndex === 3) {
-      params[2] *= 2 ** ((12 - 12) / 12);
-    }
     const samples = ZZFX.buildSamples(...params);
     if (samples.length > 0) {
       zzfxP([samples]);
@@ -559,20 +556,23 @@ function Studio() {
       patternEffects: { ...currentSong.patternEffects, [ap]: effects },
     };
 
+    // Commit before rendering, never after. Committing in the .then() reads a
+    // song from before the await and writes it back afterwards, so any edit made
+    // during the render is silently overwritten — and the overwrite lands in the
+    // undo history as though it were the user's. Note edits already commit
+    // immediately and let the audio catch up; this now matches.
+    commitSong(newSong, 'regenerate channel');
+    flashChannel([channelIndex]);
+
     if (audioGraphRef.current?.isPlaying) {
       setRenderingChannels(prev => new Set(prev).add(channelIndex));
       renderEngineRef.current.renderSongBuffers(newSong).then(buffers => {
-        commitSong(newSong, 'regenerate channel');
-        flashChannel([channelIndex]);
         setRenderingChannels(prev => { const next = new Set(prev); next.delete(channelIndex); return next; });
         channelBuffersRef.current[channelIndex] = buffers[channelIndex];
         audioGraphRef.current?.replaceChannel(channelIndex, buffers[channelIndex]);
       });
-    } else {
-      commitSong(newSong, 'regenerate channel');
-      flashChannel([channelIndex]);
     }
-  }, [flashChannel]);
+  }, [flashChannel, commitSong]);
 
   const handleRegenSingleInstrument = useCallback((channelIndex: number) => {
     const currentSong = useSongStore.getState().song;
@@ -583,30 +583,24 @@ function Studio() {
     const newSong = { ...currentSong, instruments: newInstruments };
     const newVol = newInstruments[channelIndex][0] ?? 1;
 
+    // Same read-modify-write-across-an-await hazard as regenerate channel.
+    commitSong(newSong, 'regenerate instrument');
+    previewParams(newInstruments[channelIndex]);
+    useSongStore.getState().setChannelVolumes(prev => {
+      const next = [...prev];
+      next[channelIndex] = newVol;
+      return next;
+    });
+
     if (audioGraphRef.current?.isPlaying) {
       setRenderingChannels(prev => new Set(prev).add(channelIndex));
       renderEngineRef.current.renderSongBuffers(newSong).then(buffers => {
-        commitSong(newSong, 'regenerate instrument');
-        previewParams(newInstruments[channelIndex], channelIndex);
-        useSongStore.getState().setChannelVolumes(prev => {
-          const next = [...prev];
-          next[channelIndex] = newVol;
-          return next;
-        });
         setRenderingChannels(prev => { const next = new Set(prev); next.delete(channelIndex); return next; });
         channelBuffersRef.current[channelIndex] = buffers[channelIndex];
         audioGraphRef.current?.replaceChannel(channelIndex, buffers[channelIndex]);
       });
-    } else {
-      commitSong(newSong, 'regenerate instrument');
-      previewParams(newInstruments[channelIndex], channelIndex);
-      useSongStore.getState().setChannelVolumes(prev => {
-        const next = [...prev];
-        next[channelIndex] = newVol;
-        return next;
-      });
     }
-  }, []);
+  }, [commitSong, previewParams]);
 
   const handleVolumeChange = useCallback((channelIndex: number, newVol: number) => {
     updateVolume(channelIndex, newVol);
@@ -726,6 +720,11 @@ function Studio() {
   const handleHistoryKey = useEffectEvent((e: KeyboardEvent) => {
     const mod = e.metaKey || e.ctrlKey;
     if (!mod || e.key.toLowerCase() !== 'z') return false;
+    // The song name is an editable field; inside it, undo belongs to the text.
+    const target = e.target as HTMLElement | null;
+    if (target?.isContentEditable) return false;
+    const tag = target?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return false;
     const { undo, redo } = useSongStore.getState();
     const moved = e.shiftKey ? redo() : undo();
     if (moved) rerenderAllChannels();
@@ -744,7 +743,7 @@ function Studio() {
   const handlePreviewInstrument = useCallback((channelIndex: number) => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong) return;
-    previewParams(currentSong.instruments[channelIndex], channelIndex);
+    previewParams(currentSong.instruments[channelIndex]);
   }, [previewParams]);
 
   // Export / Import

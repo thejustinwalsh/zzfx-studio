@@ -122,23 +122,58 @@ test('garbage in the parameter is ignored rather than thrown', async () => {
   }
 });
 
-test('a truncated payload is refused, not half-decoded', async () => {
+/** Anything the decoder hands back must be a song the engine can actually use. */
+function assertUsableSong(song: any, context: string) {
+  assert.equal(song.instruments.length, 4, `${context}: wrong instrument count`);
+  assert.ok(song.patternOrder.length > 0, `${context}: no patterns`);
+  for (const label of song.patternOrder) {
+    const pattern = song.patterns[label];
+    assert.equal(pattern.length, 4, `${context}: wrong channel count`);
+    for (const ch of pattern) {
+      assert.equal(ch.length, 34, `${context}: channel is not [instrument, pan, ...32 notes]`);
+      assert.ok(ch.every((n: number) => Number.isFinite(n)), `${context}: non-numeric note`);
+    }
+  }
+  assert.ok(
+    song.sequence.every((i: number) => i >= 0 && i < song.patternOrder.length),
+    `${context}: sequence points outside patternOrder`
+  );
+}
+
+test('a truncated payload is refused outright, never half-decoded', async () => {
   const code = await share.songToShareCode(realSong());
   for (const frac of [0.25, 0.5, 0.75, 0.9]) {
     const cut = code.slice(0, Math.floor(code.length * frac));
     const out = await share.songFromShareCode(cut);
-    assert.ok(out === null || typeof out === 'object', 'threw on truncated input');
+    // A truncated deflate stream cannot inflate, so there is nothing to salvage.
+    assert.equal(out, null, `a payload cut to ${frac * 100}% decoded to something`);
   }
 });
 
-test('a corrupted payload never hangs or throws', async () => {
+test('a corrupted payload yields null or a usable song, never a broken one', async () => {
   const code = await share.songToShareCode(realSong());
+  let decoded = 0;
   for (let i = 0; i < 40; i++) {
     const at = (i * 37) % code.length;
     const mutated = code.slice(0, at) + (code[at] === 'A' ? 'B' : 'A') + code.slice(at + 1);
     const out = await share.songFromShareCode(mutated);
-    assert.ok(out === null || typeof out === 'object');
+    if (out === null) continue;
+    decoded++;
+    // If it claims to have decoded, it must be structurally sound — a
+    // half-decoded song reaching the engine is the failure this guards.
+    assertUsableSong(out, `bit flipped at ${at}`);
   }
+  assert.ok(decoded >= 0);
+});
+
+test('a hostile payload cannot claim a shape the engine cannot render', async () => {
+  const packed = share.packSong(realSong(1));
+  // Instrument count sits right after the config block; forge an absurd one.
+  const forged = Uint8Array.from(packed);
+  const nameLen = (forged[1] << 8) | forged[2];
+  const instCountAt = 3 + nameLen + 4 + 2;
+  forged[instCountAt] = 99;
+  assert.equal(share.unpackSong(forged), null, 'accepted 99 instruments');
 });
 
 test('a future format version is refused', () => {

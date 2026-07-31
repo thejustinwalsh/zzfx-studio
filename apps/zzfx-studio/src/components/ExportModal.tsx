@@ -25,14 +25,25 @@ import type { Song } from '../engine/types';
 async function copyText(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
+    return;
   } catch {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
+    // Fall through to the legacy path.
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  // Off-screen: focusing a visible textarea scrolls the page.
+  ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } finally {
     document.body.removeChild(ta);
   }
+  // Throwing matters: the caller shows a success state otherwise, for a
+  // clipboard that holds nothing.
+  if (!ok) throw new Error('Copy was refused by the browser');
 }
 
 type StereoBuffer = [Float32Array, Float32Array];
@@ -539,7 +550,7 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
               ]}
               accessibilityRole="button"
               accessibilityLabel={
-                shareState === 'copied'
+                lastShare === 'link' && shareState === 'copied'
                   ? 'Share link copied to clipboard'
                   : 'Copy a shareable link to this song'
               }

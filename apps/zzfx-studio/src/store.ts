@@ -231,6 +231,12 @@ export const useSongStore = create<SongState>()(
         if (!s.song) return {};
         const existing = s.song.patternEffects[pattern];
         if (!existing) return {};
+        // Matches setNote: an unchanged value is not an edit, and must not
+        // consume an undo step.
+        const before = existing[channel]?.[row] ?? null;
+        const same = before === effect ||
+          (!!before && !!effect && before.code === effect.code && before.value === effect.value);
+        if (same) return {};
 
         const channels = [...existing] as PatternEffects;
         const data = [...channels[channel]];

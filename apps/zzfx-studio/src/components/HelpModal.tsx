@@ -126,6 +126,17 @@ function KeyCombo({ keys, chord }: { keys: string[]; chord?: boolean }) {
 }
 
 export function HelpModal({ visible, onClose }: HelpModalProps) {
+  // onRequestClose only covers Android's hardware back button; Escape is what
+  // dismisses everything else in the grid, so it should close this too.
+  React.useEffect(() => {
+    if (!visible || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [visible, onClose]);
+
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <Pressable style={styles.overlay} onPress={onClose}>

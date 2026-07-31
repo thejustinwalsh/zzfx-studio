@@ -385,7 +385,10 @@ export function generateInstruments(vibe: VibeName): ZzFXSound[] {
 export type DrumVoice = 'KICK' | 'SNARE' | 'HAT';
 
 export function drumVoiceInstrument(base: ZzFXSound, voice: DrumVoice): ZzFXSound {
+  // Assigning past the end of a short array leaves holes, and ZzFX reads those
+  // as undefined rather than 0. Pad to the full parameter count first.
   const p = [...base];
+  while (p.length < 20) p.push(0);
   switch (voice) {
     case 'KICK':
       p[2] = 130;     // low body

@@ -538,6 +538,12 @@ export function PatternGrid({
     node?.releasePointerCapture?.(e.nativeEvent.pointerId);
   }, [onEndEdit]);
 
+  // An unmount mid-drag would otherwise leave the undo transaction open, and
+  // the next edit would be folded into it.
+  useEffect(() => () => {
+    if (drag.current) onEndEdit();
+  }, [onEndEdit]);
+
   // ---- Render ---------------------------------------------------------------
 
   const octaveLabel = `OCT${octave}`;

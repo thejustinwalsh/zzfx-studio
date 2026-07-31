@@ -36,6 +36,26 @@ const FORMAT_VERSION = 1;
 const FLAG_DEFLATED = 1;
 
 /**
+ * Ceiling on the inflated payload. Deflate happily expands a few hundred bytes
+ * into hundreds of megabytes, and this input arrives from a URL a stranger
+ * wrote — a share link should not be able to exhaust memory. Comfortably above
+ * the largest real song, which packs to a couple of kilobytes.
+ */
+const MAX_INFLATED_BYTES = 1 << 20;
+
+/**
+ * The effect code rides in 3 bits alongside the row, so the format tops out at
+ * eight codes. Adding a ninth would silently alias onto an existing one in every
+ * link already shared, so it fails loudly here instead.
+ */
+if (EFFECT_CODES.length > 8) {
+  throw new Error(
+    `The share format packs the effect code into 3 bits, so it holds 8 codes; ` +
+    `EFFECT_CODES has ${EFFECT_CODES.length}. Widen the field and bump FORMAT_VERSION.`
+  );
+}
+
+/**
  * These arrays ARE the wire format — an index is what gets written. Appending
  * is safe; reordering or removing silently breaks every link ever shared.
  * A test pins them against the live types.
@@ -191,8 +211,10 @@ export function unpackSong(bytes: Uint8Array): Song | null {
 
   const config = { name, vibe, key, scale, bpm, length };
 
+  // The engine is built around four channels and their four instruments;
+  // anything else would decode cleanly and then break at render time.
   const instCount = r.u8();
-  if (instCount === 0 || instCount > 16) return null;
+  if (instCount !== 4) return null;
   const instruments: number[][] = [];
   for (let k = 0; k < instCount; k++) {
     const len = r.u8();
@@ -216,14 +238,14 @@ export function unpackSong(bytes: Uint8Array): Song | null {
     const label = String.fromCharCode(r.u8());
     const role = ROLES[r.u8()] ?? 'verse';
     const chCount = r.u8();
-    if (chCount === 0 || chCount > 8) return null;
+    if (chCount !== 4) return null;
 
     const channels: number[][] = [];
     for (let c = 0; c < chCount; c++) {
       const instrument = r.u8();
       const pan = r.u8() - 128;
       const noteCount = r.u8();
-      if (noteCount > 64) return null;
+      if (noteCount !== 32) return null;   // patterns are fixed at 32 rows
       const ch = [instrument, pan];
       let acc = 0, bits = 0;
       for (let i = 0; i < noteCount; i++) {
@@ -324,7 +346,8 @@ async function deflate(bytes: Uint8Array): Promise<Uint8Array | null> {
 
 async function inflate(bytes: Uint8Array): Promise<Uint8Array | null> {
   try {
-    return await pipeThrough(new DecompressionStream('deflate-raw'), bytes);
+    const out = await pipeThrough(new DecompressionStream('deflate-raw'), bytes);
+    return out.length > MAX_INFLATED_BYTES ? null : out;
   } catch {
     return null;
   }
