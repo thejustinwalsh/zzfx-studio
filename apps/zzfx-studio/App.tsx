@@ -13,9 +13,11 @@ import {
   InstrumentCard,
   SequenceMatrix,
   PatternGrid,
+  GRID_ROWS,
   ExportModal,
   LoadModal,
   HelpModal,
+  MidiModal,
   BrandTitle,
   RetroAvatar,
   UpdateBanner,
@@ -43,6 +45,7 @@ import {
   baseOctaveFromFreq,
 } from './src/engine';
 import { shareCodeFromUrl, SHARE_PARAM, shouldShowMiniPlayer, loadShareCodec, prefetchShareCodec } from './src/engine/share';
+import { loadMidi } from './src/engine/midiLoader';
 import { EmbedPlayer } from './src/screens/EmbedPlayer';
 import { openTextFile } from './src/platform';
 import type { ChannelIndex } from './src/theme/colors';
@@ -207,6 +210,18 @@ function Studio() {
   const exportPromiseRef = useRef<Promise<[Float32Array, Float32Array][]> | null>(null);
   const [showLoad, setShowLoad] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+
+  // MIDI. The module is loaded on demand — requesting access needs a user
+  // gesture anyway, and most sessions never touch a controller.
+  const [showMidi, setShowMidi] = useState(false);
+  const [midiEnabled, setMidiEnabled] = useState(false);
+  const [midiDevices, setMidiDevices] = useState<{ id: string; name: string; manufacturer: string }[]>([]);
+  const [midiError, setMidiError] = useState<string | null>(null);
+  const [armedChannels, setArmedChannels] = useState<number[]>([0]);
+  const midiSessionRef = useRef<{ dispose(): void } | null>(null);
+  const midiSupported = Platform.OS === 'web'
+    && typeof navigator !== 'undefined'
+    && 'requestMIDIAccess' in navigator;
 
   // ADSR progress shared values — driven from RAF, consumed by WaveformPreview on UI thread
   const adsrProgress0 = useSharedValue<number | null>(null);
@@ -752,6 +767,75 @@ function Studio() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  /**
+   * A note arriving from a controller.
+   *
+   * Stopped, it just sounds. Playing, it is written into the grid at the row
+   * nearest the playhead — so there is no separate record button, and undo
+   * covers a wrong take. Kept as an effect event so it always sees the current
+   * armed set and playhead without re-binding the MIDI listener.
+   */
+  const handleMidiNote = useEffectEvent((event: {
+    type: 'noteon' | 'noteoff'; channel: number; note: number; velocity: number;
+  }) => {
+    if (event.type !== 'noteon') return;
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
+
+    void loadMidi().then(({ routeToChannels, midiNoteToZzfxm, quantizeToRow }) => {
+      for (const ch of routeToChannels(armedChannels, event.channel)) {
+        const base = baseOctaveFromFreq(currentSong.instruments[ch]?.[2] ?? 261.63);
+        const value = midiNoteToZzfxm(event.note, base);
+        if (value === null) return;   // outside the range — dropped, not clamped
+
+        if (audioGraphRef.current?.isPlaying) {
+          const row = quantizeToRow(
+            audioGraphRef.current.getPosition(),
+            currentSong.config.bpm,
+            GRID_ROWS
+          );
+          const label = useSongStore.getState().activePattern;
+          useSongStore.getState().setNote(label, ch, row, value);
+          scheduleChannelRerender(ch);
+        } else {
+          handleAuditionNote(ch, value);
+        }
+      }
+    });
+  });
+
+  const enableMidi = useCallback(async () => {
+    setMidiError(null);
+    try {
+      const { startMidi } = await loadMidi();
+      const session = await startMidi(
+        (e) => handleMidiNote(e),
+        (devices) => setMidiDevices(devices),
+      );
+      midiSessionRef.current = session;
+      setMidiDevices(session.devices);
+      setMidiEnabled(true);
+    } catch (err) {
+      setMidiError(err instanceof Error ? err.message : 'Could not reach MIDI');
+      setMidiEnabled(false);
+    }
+  }, []);
+
+  const disableMidi = useCallback(() => {
+    midiSessionRef.current?.dispose();
+    midiSessionRef.current = null;
+    setMidiEnabled(false);
+    setMidiDevices([]);
+  }, []);
+
+  useEffect(() => () => { midiSessionRef.current?.dispose(); }, []);
+
+  const toggleArm = useCallback((ch: number) => {
+    setArmedChannels((prev) =>
+      prev.includes(ch) ? prev.filter((c) => c !== ch) : [...prev, ch]
+    );
+  }, []);
+
   const handlePreviewInstrument = useCallback((channelIndex: number) => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong) return;
@@ -871,6 +955,20 @@ function Studio() {
           <Dropdown label="SCALE" value={scale} options={SCALE_OPTIONS} onSelect={(v) => handleScaleChange(v as ScaleName)} />
           <Dropdown label="LENGTH" value={songLength} options={LENGTH_OPTIONS} onSelect={(v) => handleLengthChange(v as SongLength)} />
           <Slider label="BPM" value={bpm} min={80} max={180} step={1} onValueChange={setBpm} />
+          {midiSupported && (
+            <AnimatedPressable
+              onPress={() => setShowMidi(true)}
+              style={[styles.midiBtn, midiEnabled && styles.midiBtnOn]}
+              accessibilityRole="button"
+              accessibilityLabel={
+                midiEnabled
+                  ? `MIDI connected, ${midiDevices.length} input${midiDevices.length === 1 ? '' : 's'}`
+                  : 'MIDI settings'
+              }
+            >
+              <Text style={[styles.midiBtnText, midiEnabled && styles.midiBtnTextOn]}>MIDI</Text>
+            </AnimatedPressable>
+          )}
         </View>
       </View>
 
@@ -1017,6 +1115,9 @@ function Studio() {
           onSetEffect={handleSetEffect}
           onEdit={scheduleChannelRerender}
           onAudition={handleAuditionNote}
+          midiEnabled={midiEnabled}
+          armedChannels={armedChannels}
+          onToggleArm={toggleArm}
           onBeginEdit={useSongStore.getState().beginEdit}
           onEndEdit={useSongStore.getState().endEdit}
           isPlaying={isPlaying}
@@ -1030,6 +1131,19 @@ function Studio() {
       ) : null}
 
       <HelpModal visible={showHelp} onClose={() => setShowHelp(false)} />
+
+      <MidiModal
+        visible={showMidi}
+        onClose={() => setShowMidi(false)}
+        supported={midiSupported}
+        enabled={midiEnabled}
+        devices={midiDevices}
+        armedChannels={armedChannels}
+        error={midiError}
+        onEnable={enableMidi}
+        onDisable={disableMidi}
+        onToggleArm={toggleArm}
+      />
 
       {/* Load Modal */}
       <LoadModal
@@ -1158,6 +1272,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
     alignItems: 'center',
+  },
+  midiBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    alignSelf: 'flex-end',
+  },
+  midiBtnOn: {
+    borderColor: colors.accentPrimary,
+    backgroundColor: 'rgba(232, 116, 14, 0.12)',
+  },
+  midiBtnText: {
+    fontFamily: fonts.mono,
+    fontSize: 9,
+    fontWeight: '700',
+    color: colors.textDim,
+    letterSpacing: 1,
+  },
+  midiBtnTextOn: {
+    color: colors.accentPrimary,
   },
   actionBtn: {
     paddingHorizontal: spacing.sm,

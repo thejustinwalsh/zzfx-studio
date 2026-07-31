@@ -43,19 +43,23 @@ import type {
 export const GRID_ROWS = 32;
 
 /**
- * Where mute and solo drop out of the channel headers, leaving regenerate —
- * the only one of the three with no other route to it.
+ * Where mute and solo drop out of the channel headers.
  *
  * Measured from the running app, three buttons stop physically fitting at 413:
  *
  *   channel name  33.2   M S R group  58.0   column padding  4.0
  *   (33.2 + 58 + 4) x 4 channels + 32 row-number column = 413
  *
- * The breakpoint sits above that on purpose. Between 413 and 460 the buttons
- * fit but the headers crowd the note data, so a phone in portrait goes compact
- * rather than merely surviving.
+ * The breakpoint sits above that on purpose — between 413 and 460 the buttons
+ * fit while crowding the note data. Arming adds a fourth button, so the clip has
+ * to happen sooner again when MIDI is on: one more 18px button plus its gap,
+ * across four channels, is another 80px.
+ *
+ * What survives compaction is regenerate and arm. Neither has another route to
+ * it, whereas mute and solo are reachable elsewhere.
  */
 const COMPACT_HEADER_WIDTH = 460;
+const COMPACT_HEADER_WIDTH_WITH_ARM = 540;
 const CHANNELS = 4;
 const CHANNEL_NAMES = ['LEAD', 'HARM', 'BASS', 'DRUM'];
 const CHANNEL_COLORS = [
@@ -96,6 +100,12 @@ interface PatternGridProps {
   soloChannel: number | null;
   renderingChannels: Set<number>;
   flashChannels: Set<number>;
+  /** Arming only exists once MIDI is on, so the header keeps its width until
+   *  there is a controller to route. Web MIDI is Chrome/Edge and Android only —
+   *  on iOS this is always false. */
+  midiEnabled: boolean;
+  armedChannels: number[];
+  onToggleArm: (ch: number) => void;
   onToggleMute: (ch: number) => void;
   onToggleSolo: (ch: number) => void;
   onRegenChannel: (ch: number) => void;
@@ -152,6 +162,9 @@ export function PatternGrid({
   soloChannel,
   renderingChannels,
   flashChannels,
+  midiEnabled,
+  armedChannels,
+  onToggleArm,
   onToggleMute,
   onToggleSolo,
   onRegenChannel,
@@ -166,7 +179,8 @@ export function PatternGrid({
   onLayoutMetrics,
 }: PatternGridProps) {
   const { width: viewportWidth } = useWindowDimensions();
-  const compactHeaders = viewportWidth < COMPACT_HEADER_WIDTH;
+  const compactHeaders = viewportWidth <
+    (midiEnabled ? COMPACT_HEADER_WIDTH_WITH_ARM : COMPACT_HEADER_WIDTH);
 
   const [cursor, setCursor] = useState<Cursor>({ row: 0, channel: 0, field: 'note' });
   const [focused, setFocused] = useState(false);
@@ -730,6 +744,20 @@ export function PatternGrid({
                     {name}
                   </Text>
                   <View style={styles.headerBtnGroup}>
+                    {midiEnabled && (
+                      <AnimatedPressable
+                        onPress={() => onToggleArm(ci)}
+                        style={[styles.toggleBtn, armedChannels.includes(ci) && styles.toggleBtnArmed]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${armedChannels.includes(ci) ? 'Disarm' : 'Arm'} ${name} channel for MIDI`}
+                        accessibilityState={{ selected: armedChannels.includes(ci) }}
+                      >
+                        <Text style={[
+                          styles.toggleText,
+                          armedChannels.includes(ci) && styles.toggleTextArmed,
+                        ]}>A</Text>
+                      </AnimatedPressable>
+                    )}
                     {!compactHeaders && (
                       <AnimatedPressable
                         onPress={() => onToggleMute(ci)}
@@ -968,6 +996,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: colors.borderSubtle,
+  },
+  toggleBtnArmed: {
+    borderColor: colors.accentPrimary,
+    backgroundColor: 'rgba(232, 116, 14, 0.18)',
+  },
+  toggleTextArmed: {
+    color: colors.accentPrimary,
   },
   toggleBtnMuted: {
     borderColor: colors.accentStop,

@@ -13,6 +13,7 @@ export { PatternGrid, GRID_ROWS } from './PatternGrid';
 export { ExportModal, prefetchHighlighter } from './ExportModal';
 export { LoadModal } from './LoadModal';
 export { HelpModal } from './HelpModal';
+export { MidiModal } from './MidiModal';
 export { BrandTitle } from './BrandTitle/BrandTitle';
 export { RetroAvatar } from './RetroAvatar';
 export { PulsingView } from './PulsingView';
