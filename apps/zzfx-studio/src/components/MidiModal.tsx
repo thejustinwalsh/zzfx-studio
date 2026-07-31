@@ -87,33 +87,36 @@ export function MidiModal({
                   {error ? <Text style={styles.error}>{error}</Text> : null}
                 </View>
 
-                {enabled && (
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>INPUTS</Text>
-                    {devices.length === 0 ? (
-                      <Text style={styles.note}>
-                        Nothing connected. Plug a controller in — the list updates without a reload.
-                      </Text>
-                    ) : (
-                      devices.map((d) => (
-                        <View key={d.id} style={styles.deviceRow}>
-                          <View style={styles.deviceDot} />
-                          <Text style={styles.deviceName} numberOfLines={1}>{d.name}</Text>
-                          {!!d.manufacturer && (
-                            <Text style={styles.deviceMaker} numberOfLines={1}>{d.manufacturer}</Text>
-                          )}
-                        </View>
-                      ))
-                    )}
-                  </View>
-                )}
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>INPUTS</Text>
+                  {!enabled ? (
+                    <Text style={styles.note}>
+                      Your devices cannot be listed until the browser grants MIDI access. Connect
+                      above and anything plugged in will appear here.
+                    </Text>
+                  ) : devices.length === 0 ? (
+                    <Text style={styles.note}>
+                      Access granted, but no inputs are reporting. Plug a controller in — the list
+                      updates without a reload.
+                    </Text>
+                  ) : (
+                    devices.map((d) => (
+                      <View key={d.id} style={styles.deviceRow}>
+                        <View style={styles.deviceDot} />
+                        <Text style={styles.deviceName} numberOfLines={1}>{d.name}</Text>
+                        {!!d.manufacturer && (
+                          <Text style={styles.deviceMaker} numberOfLines={1}>{d.manufacturer}</Text>
+                        )}
+                      </View>
+                    ))
+                  )}
+                </View>
 
                 <View style={styles.section}>
                   <Text style={styles.sectionTitle}>ARMED CHANNELS</Text>
                   <Text style={styles.note}>
-                    One armed channel takes every note, whatever channel it arrives on — which is
-                    what most keyboards send. Arm several and the incoming channel picks between
-                    them.
+                    One armed channel takes every note. Arm several and the incoming MIDI channel
+                    picks between them.
                   </Text>
                   {CHANNEL_NAMES.map((name, ci) => {
                     const armed = armedChannels.includes(ci);
@@ -139,14 +142,10 @@ export function MidiModal({
                   })}
                 </View>
 
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>RECORDING</Text>
-                  <Text style={styles.note}>
-                    Stopped, played notes just sound. While the song plays they are written into the
-                    grid at the nearest row, so there is no separate record button. Undo covers a
-                    wrong take.
-                  </Text>
-                </View>
+                <Text style={styles.footnote}>
+                  Stopped, notes just sound. Playing, they are written into the grid at the nearest
+                  row — no record button, and undo covers a wrong take.
+                </Text>
               </>
             )}
           </ScrollView>
@@ -165,7 +164,6 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
   },
   modal: {
-    flex: 1,
     width: '100%',
     maxWidth: 520,
     maxHeight: '85%',
@@ -209,7 +207,7 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontWeight: '700',
   },
-  body: { flex: 1 },
+  body: { flexShrink: 1 },
   bodyContent: {
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.lg,
@@ -304,6 +302,13 @@ const styles = StyleSheet.create({
     fontFamily: fonts.mono,
     fontSize: 9,
     color: colors.textDim,
+  },
+  footnote: {
+    fontFamily: fonts.mono,
+    fontSize: 9,
+    color: colors.textDim,
+    lineHeight: 13,
+    marginTop: spacing.sm,
   },
   armState: {
     fontFamily: fonts.mono,

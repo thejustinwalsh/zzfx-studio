@@ -18,6 +18,7 @@ import {
   LoadModal,
   HelpModal,
   MidiModal,
+  MidiIcon,
   BrandTitle,
   RetroAvatar,
   UpdateBanner,
@@ -966,6 +967,10 @@ function Studio() {
                   : 'MIDI settings'
               }
             >
+              <MidiIcon
+                size={22}
+                color={midiEnabled ? colors.accentPrimary : colors.textSecondary}
+              />
               <Text style={[styles.midiBtnText, midiEnabled && styles.midiBtnTextOn]}>MIDI</Text>
             </AnimatedPressable>
           )}
@@ -1273,9 +1278,14 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     alignItems: 'center',
   },
+  // A square the size of the transport buttons: icon over label, so it reads as
+  // a device connection rather than another text chip.
   midiBtn: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    width: 52,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
     borderWidth: 1,
     borderColor: colors.borderSubtle,
     alignSelf: 'flex-end',
@@ -1286,9 +1296,9 @@ const styles = StyleSheet.create({
   },
   midiBtnText: {
     fontFamily: fonts.mono,
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '700',
-    color: colors.textDim,
+    color: colors.textSecondary,
     letterSpacing: 1,
   },
   midiBtnTextOn: {
