@@ -47,6 +47,7 @@ import {
 } from './src/engine';
 import { shareCodeFromUrl, SHARE_PARAM, shouldShowMiniPlayer, loadShareCodec, prefetchShareCodec } from './src/engine/share';
 import { loadMidi } from './src/engine/midiLoader';
+import { useLaunchpad } from './src/hooks/useLaunchpad';
 import { EmbedPlayer } from './src/screens/EmbedPlayer';
 import { openTextFile } from './src/platform';
 import type { ChannelIndex } from './src/theme/colors';
@@ -837,6 +838,46 @@ function Studio() {
     );
   }, []);
 
+  /**
+   * A Launchpad pad played a note.
+   *
+   * The pad already carries a ZzFXM note for its own channel, so unlike a
+   * keyboard there is nothing to convert — the quadrant chose the channel and
+   * the layout table chose the note. Everything else matches MIDI input:
+   * stopped it sounds, playing it lands on the nearest row.
+   */
+  const handleLaunchpadNote = useCallback((channel: number, note: number) => {
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
+
+    if (audioGraphRef.current?.isPlaying) {
+      void loadMidi().then(({ quantizeToRow }) => {
+        const graph = audioGraphRef.current;
+        if (!graph) return;
+        const row = quantizeToRow(graph.getPosition(), currentSong.config.bpm, GRID_ROWS);
+        useSongStore.getState().setNote(
+          useSongStore.getState().activePattern, channel, row, note
+        );
+        scheduleChannelRerender(channel);
+      });
+    } else {
+      handleAuditionNote(channel, note);
+    }
+  }, [scheduleChannelRerender, handleAuditionNote]);
+
+  const handleLaunchpadPattern = useCallback((index: number) => {
+    const label = useSongStore.getState().song?.patternOrder?.[index];
+    if (label) setActivePattern(label);
+  }, [setActivePattern]);
+
+  const launchpad = useLaunchpad({
+    song,
+    activePattern,
+    armedChannels,
+    onNote: handleLaunchpadNote,
+    onSelectPattern: handleLaunchpadPattern,
+  });
+
   const handlePreviewInstrument = useCallback((channelIndex: number) => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong) return;
@@ -1148,6 +1189,7 @@ function Studio() {
         onEnable={enableMidi}
         onDisable={disableMidi}
         onToggleArm={toggleArm}
+        launchpad={launchpad}
       />
 
       {/* Load Modal */}

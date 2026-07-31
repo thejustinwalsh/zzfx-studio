@@ -3,9 +3,17 @@ import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from '
 import { AnimatedPressable } from './AnimatedPressable';
 import { colors, fonts, fontSize, spacing } from '../theme';
 import type { MidiDevice } from '../engine/midi';
+import type { LaunchpadControls } from '../hooks/useLaunchpad';
 
 const CHANNEL_NAMES = ['LEAD', 'HARM', 'BASS', 'DRUM'];
 const CHANNEL_COLORS = [colors.ch0Primary, colors.ch1Primary, colors.ch2Primary, colors.ch3Primary];
+
+/** What each layout is for, shown under its name so the choice needs no manual. */
+const LAYOUTS = [
+  { id: 'SESSION', hint: 'patterns' },
+  { id: 'KEYS', hint: 'play' },
+  { id: 'DRUMS', hint: 'kit' },
+] as const;
 
 /** Mirrors CHANNEL_TO_MIDI in the midi module — General MIDI puts drums on 10. */
 const MIDI_CHANNELS = [1, 2, 3, 10];
@@ -21,6 +29,7 @@ interface MidiModalProps {
   onEnable: () => void;
   onDisable: () => void;
   onToggleArm: (ch: number) => void;
+  launchpad: LaunchpadControls;
 }
 
 export function MidiModal({
@@ -34,6 +43,7 @@ export function MidiModal({
   onEnable,
   onDisable,
   onToggleArm,
+  launchpad,
 }: MidiModalProps) {
   // Escape closes it, matching the rest of the grid interaction. onRequestClose
   // only fires for Android's hardware back button.
@@ -140,6 +150,68 @@ export function MidiModal({
                       </AnimatedPressable>
                     );
                   })}
+                </View>
+
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>LAUNCHPAD</Text>
+                  <Text style={styles.note}>
+                    Lighting the pads needs SysEx, a separate and heavier browser permission than
+                    note input — so it is asked for only here.
+                  </Text>
+
+                  <AnimatedPressable
+                    onPress={launchpad.enabled ? launchpad.disable : launchpad.enable}
+                    disabled={launchpad.connecting}
+                    style={[styles.enableBtn, launchpad.enabled && styles.enableBtnOn]}
+                    accessibilityRole="button"
+                    accessibilityLabel={launchpad.enabled ? 'Release the Launchpad' : 'Take control of the Launchpad'}
+                  >
+                    <Text style={[styles.enableText, launchpad.enabled && styles.enableTextOn]}>
+                      {launchpad.connecting
+                        ? 'CONNECTING…'
+                        : launchpad.enabled
+                          ? 'RELEASE'
+                          : 'TAKE CONTROL'}
+                    </Text>
+                  </AnimatedPressable>
+
+                  {launchpad.error ? <Text style={styles.error}>{launchpad.error}</Text> : null}
+
+                  {launchpad.enabled && (
+                    <>
+                      <View style={styles.deviceRow}>
+                        <View style={styles.deviceDot} />
+                        <Text style={styles.deviceName} numberOfLines={1}>
+                          {launchpad.deviceName ?? 'Launchpad Mini MK3'}
+                        </Text>
+                        <Text style={styles.deviceMaker}>PROGRAMMER MODE</Text>
+                      </View>
+
+                      <Text style={[styles.sectionTitle, styles.layoutTitle]}>LAYOUT</Text>
+                      <View style={styles.layoutRow}>
+                        {LAYOUTS.map(({ id, hint }) => {
+                          const on = launchpad.layout === id;
+                          return (
+                            <AnimatedPressable
+                              key={id}
+                              onPress={() => launchpad.setLayout(id)}
+                              style={[styles.layoutBtn, on && styles.layoutBtnOn]}
+                              accessibilityRole="button"
+                              accessibilityState={{ selected: on }}
+                              accessibilityLabel={`${id} layout — ${hint}`}
+                            >
+                              <Text style={[styles.layoutLabel, on && styles.layoutLabelOn]}>{id}</Text>
+                              <Text style={styles.layoutHint}>{hint}</Text>
+                            </AnimatedPressable>
+                          );
+                        })}
+                      </View>
+                      <Text style={styles.footnote}>
+                        The top row of the device switches layouts too. In KEYS each quadrant is one
+                        channel, coloured to match its track.
+                      </Text>
+                    </>
+                  )}
                 </View>
 
                 <Text style={styles.footnote}>
@@ -299,6 +371,38 @@ const styles = StyleSheet.create({
   },
   channelNameArmed: { color: colors.textPrimary },
   channelMidi: {
+    fontFamily: fonts.mono,
+    fontSize: 9,
+    color: colors.textDim,
+  },
+  layoutTitle: { marginTop: spacing.md },
+  layoutRow: {
+    flexDirection: 'row',
+    gap: 4,
+    marginBottom: spacing.sm,
+  },
+  layoutBtn: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    alignItems: 'center',
+    gap: 1,
+  },
+  layoutBtnOn: {
+    borderColor: colors.accentPrimary,
+    backgroundColor: 'rgba(232, 116, 14, 0.10)',
+  },
+  layoutLabel: {
+    fontFamily: fonts.mono,
+    fontSize: fontSize.buttonLabel,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    letterSpacing: 1,
+  },
+  layoutLabelOn: { color: colors.accentPrimary },
+  layoutHint: {
     fontFamily: fonts.mono,
     fontSize: 9,
     color: colors.textDim,
