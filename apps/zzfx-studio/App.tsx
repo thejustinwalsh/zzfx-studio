@@ -2,7 +2,7 @@ import { useRef, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMem
 import { ZZFX } from 'zzfx';
 import { useSharedValue } from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
-import { Platform, StyleSheet, Text, TextInput, View, ScrollView } from 'react-native';
+import { Dimensions, Platform, StyleSheet, Text, TextInput, View, ScrollView } from 'react-native';
 import { AnimatedPressable } from './src/components/AnimatedPressable';
 import { colors, fonts, fontSize, spacing } from './src/theme';
 import {
@@ -42,10 +42,12 @@ import {
   codeToSong,
   baseOctaveFromFreq,
 } from './src/engine';
-import { shareCodeFromUrl, songFromShareCode, SHARE_PARAM } from './src/engine/share';
+import { shareCodeFromUrl, songFromShareCode, SHARE_PARAM, shouldShowMiniPlayer } from './src/engine/share';
+import { EmbedPlayer } from './src/screens/EmbedPlayer';
 import { openTextFile } from './src/platform';
 import type { Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel } from './src/engine';
 import type { ChannelIndex } from './src/theme/colors';
+import { buildOscColorTable } from './src/utils/oscColors';
 import { getPatternColor, getPatternLabelColor, getPatternActiveColor, getPatternActiveLabelColor, getPatternActiveBorderColor } from './src/utils/patternColors';
 import { useSongStore, initializeStore, useStoreHydrated } from './src/store';
 import { useState } from 'react';
@@ -59,13 +61,71 @@ const KEY_OPTIONS: NoteName[] = [...CHROMATIC];
 const SCALE_OPTIONS: ScaleName[] = Object.keys(SCALES) as ScaleName[];
 const LENGTH_OPTIONS: SongLength[] = ['short', 'long', 'epic'];
 
-// Initialize store after hydration (generates random song if none persisted)
-initializeStore();
+/**
+ * Which of the two apps this bundle is right now.
+ *
+ * Driven by height rather than by the URL: below the point where the studio can
+ * show any pattern data it stops being a studio, so a short frame gets the mini
+ * player. That makes a share link and an embed link the same link. `?embed=1`
+ * still forces it, for embedding a deliberately large player.
+ */
+function useMiniPlayer(): boolean {
+  const [height, setHeight] = useState(() =>
+    Platform.OS === 'web' && typeof window !== 'undefined'
+      ? window.innerHeight
+      : Dimensions.get('window').height
+  );
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      const sub = Dimensions.addEventListener('change', ({ window: w }) => setHeight(w.height));
+      return () => sub.remove();
+    }
+    // Resizing an iframe from the parent page changes innerHeight without
+    // firing a resize event inside the frame, so a resize listener alone misses
+    // it. A ResizeObserver on the document element catches both.
+    const update = () => setHeight(window.innerHeight);
+    update();
+    window.addEventListener('resize', update);
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+    observer?.observe(document.documentElement);
+    return () => {
+      window.removeEventListener('resize', update);
+      observer?.disconnect();
+    };
+  }, []);
+
+  const url = Platform.OS === 'web' && typeof window !== 'undefined'
+    ? window.location.href
+    : '';
+  return shouldShowMiniPlayer(url, height);
+}
+
+/**
+ * A link carrying someone else's song must not generate or persist a random one
+ * into the visitor's storage. Any other visit is an ordinary session and should
+ * initialise normally — including a session that happens to be short enough to
+ * render as the mini player.
+ */
+const HAS_SHARED_SONG =
+  Platform.OS === 'web' && typeof window !== 'undefined'
+    ? shareCodeFromUrl(window.location.href) !== null
+    : false;
+
+export default function App() {
+  const mini = useMiniPlayer();
+
+  useEffect(() => {
+    if (!HAS_SHARED_SONG) initializeStore();
+  }, []);
+
+  return mini ? <EmbedPlayer /> : <Studio />;
+}
 
 // Prefetch syntax highlighter for export modal during idle time
 prefetchHighlighter();
 
-export default function App() {
+function Studio() {
   const hydrated = useStoreHydrated();
 
   // Persisted state from store
@@ -718,81 +778,11 @@ export default function App() {
   const BAR_COUNT = 64;
   const oscColorTable = useMemo(() => {
     if (!song || !currentPattern) return null;
-
-    const rowDuration = 60 / song.config.bpm / 4;
-    const analyser = audioGraphRef.current?.getAnalyser();
-    const sampleRate = analyser?.context?.sampleRate;
-    const fftSize = analyser?.fftSize;
-
-    const ctx = analyser?.context as AudioContext | undefined;
-    const audioLatency = (ctx?.baseLatency ?? 0) + (ctx?.outputLatency ?? 0);
-
-    const envelopes = song.instruments.map(params => ({
-      attack: params[3] ?? 0,
-      sustain: params[4] ?? 0,
-      release: params[5] ?? 0,
-      decay: params[18] ?? 0,
-    }));
-
-    const channelNoteMap: (ChannelNote | null)[][] = Array.from({ length: 32 }, () => []);
-
-    for (let row = 0; row < 32; row++) {
-      for (let ch = 0; ch < 4; ch++) {
-        let foundNote = 0;
-        let noteRow = -1;
-        for (let r = row; r >= 0; r--) {
-          const val = currentPattern[ch][r + 2];
-          if (val > 0) {
-            foundNote = val;
-            noteRow = r;
-            break;
-          }
-        }
-
-        if (foundNote <= 0 || noteRow < 0) {
-          channelNoteMap[row].push(null);
-          continue;
-        }
-
-        const elapsed = (row - noteRow) * rowDuration + audioLatency;
-        const env = envelopes[ch];
-        const adsrDuration = env.attack + env.decay + env.sustain + env.release;
-
-        const visualTail = 0.3;
-        const minVisualDuration = 0.4;
-        const totalVisualDuration = Math.max(adsrDuration + visualTail, minVisualDuration);
-
-        if (elapsed > totalVisualDuration) {
-          channelNoteMap[row].push(null);
-          continue;
-        }
-
-        let amp = 1.0;
-        if (elapsed < env.attack) {
-          amp = elapsed / Math.max(env.attack, 0.001);
-        } else if (elapsed < env.attack + env.decay) {
-          amp = 1.0;
-        } else if (elapsed < env.attack + env.decay + env.sustain) {
-          amp = 0.8;
-        } else if (elapsed < adsrDuration) {
-          const releaseElapsed = elapsed - (env.attack + env.decay + env.sustain);
-          amp = Math.max(0, 0.8 * (1 - releaseElapsed / Math.max(env.release, 0.001)));
-        } else {
-          const tailElapsed = elapsed - adsrDuration;
-          const tailProgress = tailElapsed / visualTail;
-          amp = 0.3 * (1 - tailProgress * tailProgress);
-        }
-
-        const baseFreq = song.instruments[ch][2] ?? 261.63;
-        const frequency = baseFreq * Math.pow(2, (foundNote - 12) / 12);
-        const shape = song.instruments[ch][6] ?? 0;
-        const baseWeight = ch === 3 ? 0.35 : 1.0;
-        channelNoteMap[row].push({ frequency, shape, weight: baseWeight * amp });
-      }
-    }
-
-    return channelNoteMap.map(notes =>
-      computeBarColors(notes, BAR_COUNT, sampleRate, fftSize)
+    return buildOscColorTable(
+      song,
+      currentPattern,
+      BAR_COUNT,
+      audioGraphRef.current?.getAnalyser()
     );
   }, [song, currentPattern]);
 

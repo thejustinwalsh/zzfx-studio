@@ -15,6 +15,51 @@ import { EFFECT_CODES } from './types';
  */
 export const SHARE_PARAM = 's';
 
+/**
+ * The studio's fixed chrome — transport, sequence strip, oscilloscope,
+ * instrument cards and the grid header — before a single row of pattern data.
+ * Measured from the running app rather than estimated.
+ */
+export const STUDIO_CHROME_HEIGHT = 399;
+export const GRID_ROW_HEIGHT = 19.5;
+
+/** Below four visible rows the studio is furniture, not an instrument. */
+export const MIN_USABLE_ROWS = 4;
+/** Where it stops feeling cramped. */
+export const IDEAL_ROWS = 8;
+
+/** Height at which the studio can still show `rows` rows of pattern data. */
+export function studioHeightForRows(rows: number): number {
+  return Math.ceil(STUDIO_CHROME_HEIGHT + rows * GRID_ROW_HEIGHT);
+}
+
+/**
+ * The mini player is chosen by height, not by URL — a share link and an embed
+ * link are the same link, and the frame's height decides which one you get.
+ *
+ * The threshold is exactly where the studio stops being usable: fewer than four
+ * rows of pattern data. Note this lands above a phone in landscape, so a phone
+ * held sideways gets the player — which is correct, since the studio could not
+ * show even one row there.
+ */
+export const MINI_PLAYER_MAX_HEIGHT = studioHeightForRows(MIN_USABLE_ROWS) - 1;
+
+/** Comfortable studio height — eight rows visible. */
+export const STUDIO_IDEAL_HEIGHT = studioHeightForRows(IDEAL_ROWS);
+
+/** Tall enough for the player's own chrome, far below the studio threshold. */
+export const DEFAULT_EMBED_HEIGHT = 180;
+/** Wide enough for the title, the settings line and the channel legend. */
+export const DEFAULT_EMBED_WIDTH = 520;
+
+/**
+ * `?embed=1` forces the mini player regardless of size — an escape hatch for
+ * embedding a deliberately large player. It is not in generated snippets.
+ * A query flag rather than a path because the app exports as a single HTML file
+ * and GitHub Pages has no rewrites: `/embed` would simply 404.
+ */
+export const EMBED_PARAM = 'embed';
+
 const FORMAT_VERSION = 1;
 
 const FLAG_DEFLATED = 1;
@@ -359,4 +404,46 @@ export function shareCodeFromUrl(url: string): string | null {
 
 export async function songToShareUrl(song: Song, origin: string, pathname: string): Promise<string> {
   return `${origin}${pathname}?${SHARE_PARAM}=${await songToShareCode(song)}`;
+}
+
+/**
+ * Same URL as sharing — the iframe's height is what selects the mini player.
+ * Kept as its own function so callers read clearly at the call site.
+ */
+export async function songToEmbedUrl(song: Song, origin: string, pathname: string): Promise<string> {
+  return songToShareUrl(song, origin, pathname);
+}
+
+/**
+ * A paste-ready iframe. `allow="autoplay"` does not make it autoplay — nothing
+ * here does — it grants the frame permission to start audio once the visitor
+ * presses play, which a cross-origin frame is otherwise refused.
+ */
+export function embedSnippet(
+  url: string,
+  title: string,
+  width: number = DEFAULT_EMBED_WIDTH,
+  height: number = DEFAULT_EMBED_HEIGHT
+): string {
+  const safe = title.replace(/"/g, '&quot;');
+  return (
+    `<iframe src="${url}" width="${width}" height="${height}" frameborder="0" ` +
+    `allow="autoplay" loading="lazy" title="${safe}"></iframe>`
+  );
+}
+
+/** Whether the URL explicitly forces the mini player. */
+export function isEmbedUrl(url: string): boolean {
+  const q = url.indexOf('?');
+  if (q < 0) return false;
+  const search = url.slice(q + 1).split('#')[0];
+  return search.split('&').some((pair) => {
+    const [k, v] = pair.split('=');
+    return k === EMBED_PARAM && v !== '0' && v !== 'false';
+  });
+}
+
+/** The mini player shows when the frame is short, or when forced by the flag. */
+export function shouldShowMiniPlayer(url: string, viewportHeight: number): boolean {
+  return isEmbedUrl(url) || viewportHeight <= MINI_PLAYER_MAX_HEIGHT;
 }

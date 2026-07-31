@@ -161,3 +161,82 @@ test('URLs without a share code read as empty', () => {
   // A hash is not a query — this format deliberately uses the query.
   assert.equal(share.shareCodeFromUrl('https://x.dev/#s=abc'), null);
 });
+
+
+// --- embed ----------------------------------------------------------------
+
+test('the embed URL is the share URL — height selects the player', async () => {
+  const song = realSong();
+  const shareUrl = await share.songToShareUrl(song, 'https://tjw.dev', '/zzfx-studio/');
+  const embedUrl = await share.songToEmbedUrl(song, 'https://tjw.dev', '/zzfx-studio/');
+  assert.equal(embedUrl, shareUrl, 'sharing and embedding produced different links');
+  const back = await share.songFromShareCode(share.shareCodeFromUrl(embedUrl));
+  assert.equal(JSON.stringify(back), JSON.stringify(song));
+});
+
+test('a short viewport gets the mini player, a tall one gets the studio', () => {
+  const url = 'https://tjw.dev/zzfx-studio/?s=abc';
+  const H = share.MINI_PLAYER_MAX_HEIGHT;
+  assert.equal(share.shouldShowMiniPlayer(url, share.DEFAULT_EMBED_HEIGHT), true);
+  assert.equal(share.shouldShowMiniPlayer(url, H), true, 'boundary is inclusive');
+  assert.equal(share.shouldShowMiniPlayer(url, H + 1), false);
+  assert.equal(share.shouldShowMiniPlayer(url, 800), false);
+});
+
+test('the breakpoint is exactly the four-row floor', () => {
+  const url = 'https://tjw.dev/?s=abc';
+  const fourRows = share.studioHeightForRows(share.MIN_USABLE_ROWS);
+  assert.equal(share.shouldShowMiniPlayer(url, fourRows), false, 'four rows must be the studio');
+  assert.equal(share.shouldShowMiniPlayer(url, fourRows - 1), true, 'below four rows must be the player');
+  // Eight rows is the comfortable target and is obviously the studio.
+  assert.equal(share.shouldShowMiniPlayer(url, share.STUDIO_IDEAL_HEIGHT), false);
+  assert.ok(share.STUDIO_IDEAL_HEIGHT > fourRows);
+});
+
+test('a phone in landscape gets the player, because the studio cannot fit a row', () => {
+  // ~375 is the short edge of common phones. It is under the four-row floor,
+  // so the player is the correct answer there.
+  assert.equal(share.shouldShowMiniPlayer('https://tjw.dev/?s=abc', 375), true);
+  assert.ok(375 < share.studioHeightForRows(share.MIN_USABLE_ROWS));
+});
+
+test('the flag forces the mini player at any height', () => {
+  assert.equal(share.shouldShowMiniPlayer('https://tjw.dev/?s=abc&embed=1', 1080), true);
+  assert.equal(share.shouldShowMiniPlayer('https://tjw.dev/?s=abc', 1080), false);
+});
+
+test('embed detection ignores absent and disabled flags', () => {
+  assert.equal(share.isEmbedUrl('https://tjw.dev/'), false);
+  assert.equal(share.isEmbedUrl('https://tjw.dev/?s=abc'), false);
+  assert.equal(share.isEmbedUrl('https://tjw.dev/?embed=0'), false);
+  assert.equal(share.isEmbedUrl('https://tjw.dev/?embed=false'), false);
+  assert.equal(share.isEmbedUrl('https://tjw.dev/?embed=1'), true);
+  assert.equal(share.isEmbedUrl('https://tjw.dev/?a=1&embed=1&b=2'), true);
+  // A hash is not a query.
+  assert.equal(share.isEmbedUrl('https://tjw.dev/#embed=1'), false);
+});
+
+test('the embed snippet is a well-formed iframe', async () => {
+  const url = await share.songToEmbedUrl(realSong(), 'https://tjw.dev', '/zzfx-studio/');
+  const html = share.embedSnippet(url, 'Supreme Monolith');
+  assert.ok(html.startsWith('<iframe '));
+  assert.ok(html.endsWith('</iframe>'));
+  assert.ok(html.includes(`src="${url}"`));
+  // Needed for the frame to be allowed to make sound after a press.
+  assert.ok(html.includes('allow="autoplay"'));
+  assert.ok(html.includes('title="Supreme Monolith"'));
+  // Fixed size, not a percentage — the height is what selects the mini player.
+  assert.ok(html.includes(`width="${share.DEFAULT_EMBED_WIDTH}"`));
+  assert.ok(html.includes(`height="${share.DEFAULT_EMBED_HEIGHT}"`));
+  assert.ok(!html.includes('width="100%"'), 'width must be fixed, not fluid');
+  assert.ok(
+    share.DEFAULT_EMBED_HEIGHT <= share.MINI_PLAYER_MAX_HEIGHT,
+    'the default embed height would render the studio, not the player'
+  );
+});
+
+test('a song title cannot break out of the snippet attribute', () => {
+  const html = share.embedSnippet('https://x.dev/', 'Evil" onload="alert(1)');
+  assert.ok(!html.includes('onload="alert(1)"'), 'title escaped out of the attribute');
+  assert.ok(html.includes('&quot;'));
+});

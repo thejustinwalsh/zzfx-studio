@@ -11,7 +11,7 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { AnimatedPressable } from './AnimatedPressable';
-import { songToShareUrl } from '../engine/share';
+import { songToShareUrl, songToEmbedUrl, embedSnippet } from '../engine/share';
 
 /** Clipboard with the execCommand fallback for browsers that refuse the API. */
 async function copyText(text: string): Promise<void> {
@@ -303,6 +303,7 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
   // invisible otherwise, and silence reads as a broken button.
   const [shareState, setShareState] = useState<'idle' | 'working' | 'copied' | 'failed'>('idle');
   const [spinFrame, setSpinFrame] = useState(0);
+  const [lastShare, setLastShare] = useState<'link' | 'embed'>('link');
   const shareOpacity = useSharedValue(1);
   const shareResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -331,18 +332,33 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
     if (shareResetRef.current) clearTimeout(shareResetRef.current);
   }, []);
 
-  const handleCopyShareUrl = useCallback(async () => {
+  const runShare = useCallback(async (build: () => Promise<string>) => {
     if (shareState === 'working') return;
     setShareState('working');
     shareOpacity.value = 1;
     try {
-      const url = await songToShareUrl(song, window.location.origin, window.location.pathname);
-      await copyText(url);
+      await copyText(await build());
       settleShare('copied');
     } catch {
       settleShare('failed');
     }
-  }, [song, shareState, settleShare, shareOpacity]);
+  }, [shareState, settleShare, shareOpacity]);
+
+  const handleCopyShareUrl = useCallback(
+    () => (setLastShare('link'), runShare(() => songToShareUrl(song, window.location.origin, window.location.pathname))),
+    [runShare, song]
+  );
+
+  // Copies the whole iframe tag rather than the bare URL — that is what gets
+  // pasted, and it carries the allow="autoplay" the frame needs to make sound
+  // once the visitor presses play.
+  const handleCopyEmbed = useCallback(
+    () => (setLastShare('embed'), runShare(async () => {
+      const url = await songToEmbedUrl(song, window.location.origin, window.location.pathname);
+      return embedSnippet(url, song.config.name || 'ZzFX Studio song');
+    })),
+    [runShare, song]
+  );
 
   const shareAnimatedStyle = useAnimatedStyle(() => ({ opacity: shareOpacity.value }));
 
@@ -490,11 +506,32 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
                 song itself, rather than producing a file or a snippet. */}
             <View style={styles.transportSpacer} />
             <AnimatedPressable
+              onPress={handleCopyEmbed}
+              style={[
+                styles.shareBtn,
+                lastShare === 'embed' && shareState === 'copied' && styles.actionBtnDone,
+                lastShare === 'embed' && shareState === 'failed' && styles.shareBtnFailed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Copy an iframe embed snippet for this song"
+            >
+              <Animated.Text
+                style={[
+                  styles.shareBtnText,
+                  lastShare === 'embed' && shareState === 'copied' && styles.actionBtnDoneText,
+                  lastShare === 'embed' && shareState === 'failed' && styles.shareBtnTextFailed,
+                  shareAnimatedStyle,
+                ]}
+              >
+                {lastShare === 'embed' ? shareGlyph : '< >'}
+              </Animated.Text>
+            </AnimatedPressable>
+            <AnimatedPressable
               onPress={handleCopyShareUrl}
               style={[
                 styles.shareBtn,
-                shareState === 'copied' && styles.actionBtnDone,
-                shareState === 'failed' && styles.shareBtnFailed,
+                lastShare === 'link' && shareState === 'copied' && styles.actionBtnDone,
+                lastShare === 'link' && shareState === 'failed' && styles.shareBtnFailed,
               ]}
               accessibilityRole="button"
               accessibilityLabel={
@@ -506,12 +543,12 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
               <Animated.Text
                 style={[
                   styles.shareBtnText,
-                  shareState === 'copied' && styles.actionBtnDoneText,
-                  shareState === 'failed' && styles.shareBtnTextFailed,
+                  lastShare === 'link' && shareState === 'copied' && styles.actionBtnDoneText,
+                  lastShare === 'link' && shareState === 'failed' && styles.shareBtnTextFailed,
                   shareAnimatedStyle,
                 ]}
               >
-                {shareGlyph}
+                {lastShare === 'link' ? shareGlyph : '↗'}
               </Animated.Text>
             </AnimatedPressable>
           </View>

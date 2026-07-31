@@ -41,4 +41,7 @@ export type {
 export {
   SHARE_PARAM, packSong, unpackSong, songToShareCode, songFromShareCode,
   shareCodeFromUrl, songToShareUrl, isShareSupported,
+  EMBED_PARAM, songToEmbedUrl, embedSnippet, isEmbedUrl,
+  shouldShowMiniPlayer, MINI_PLAYER_MAX_HEIGHT, DEFAULT_EMBED_HEIGHT, DEFAULT_EMBED_WIDTH,
+  STUDIO_IDEAL_HEIGHT, MIN_USABLE_ROWS, IDEAL_ROWS, studioHeightForRows,
 } from './share';
