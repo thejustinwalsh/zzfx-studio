@@ -1,4 +1,5 @@
 import { VibeName, ZzFXSound } from './types';
+import { FREQ_C3, FREQ_C4 } from './scales';
 
 // ZzFX params: [volume, randomness, frequency, attack, sustain, release, shape,
 //   shapeCurve, slide, deltaSlide, pitchJump, pitchJumpTime, repeatTime,
@@ -33,8 +34,13 @@ function weightedPick<T>(items: T[], weights: number[]): T {
 }
 
 // --- BASE ARCHETYPES ---
-// Each is a starting point for a channel role. Frequency (idx 2) is always
-// 261.63 (C4) — zzfxM transposes via note values at render time.
+// Each is a starting point for a channel role. Frequency (idx 2) sets the
+// channel's register; zzfxM transposes above it via note values at render
+// time, where note 12 sounds the frequency itself.
+//
+// Pitched channels are tuned to the octave they actually play in. Bass sits at
+// 130.81 (C3): tuning it to C4 like the others forced its notes into values
+// 0-11, where C collides with the rest sentinel and plays as silence.
 
 type Archetype = {
   name: string;
@@ -46,39 +52,39 @@ type Archetype = {
 
 const LEAD_ARCHETYPES: Archetype[] = [
   { name: 'classic-square',
-    params: [0.5, 0.01, 261.63, 0.005, 0.2,  0.08, 5, 1.0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.9,  0.02, 0] },
+    params: [0.5, 0.01, FREQ_C4, 0.005, 0.2,  0.08, 5, 1.0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.9,  0.02, 0] },
   { name: 'thin-pulse',
-    params: [0.5, 0.01, 261.63, 0.005, 0.2,  0.08, 5, 0.5,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.9,  0.02, 0] },
+    params: [0.5, 0.01, FREQ_C4, 0.005, 0.2,  0.08, 5, 0.5,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.9,  0.02, 0] },
   { name: 'nasal-pulse',
-    params: [0.5, 0.01, 261.63, 0.005, 0.2,  0.08, 5, 0.25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.85, 0.02, 0] },
+    params: [0.5, 0.01, FREQ_C4, 0.005, 0.2,  0.08, 5, 0.25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.85, 0.02, 0] },
   { name: 'bright-saw',
-    params: [0.4, 0.01, 261.63, 0.005, 0.18, 0.08, 2, 1.0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.85, 0.02, 0] },
+    params: [0.4, 0.01, FREQ_C4, 0.005, 0.18, 0.08, 2, 1.0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.85, 0.02, 0] },
   { name: 'soft-sine',
-    params: [0.45,0.01, 261.63, 0.01,  0.22, 0.1,  0, 1.0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.8,  0.02, 0] },
+    params: [0.45,0.01, FREQ_C4, 0.01,  0.22, 0.1,  0, 1.0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.8,  0.02, 0] },
 ];
 
 const HARMONY_ARCHETYPES: Archetype[] = [
   { name: 'thin-pulse',
-    params: [0.22, 0.01, 261.63, 0.005, 0.12, 0.08, 5, 0.4,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.7,  0.02, 0] },
+    params: [0.22, 0.01, FREQ_C4, 0.005, 0.12, 0.08, 5, 0.4,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.7,  0.02, 0] },
   { name: 'soft-saw',
-    params: [0.2,  0.01, 261.63, 0.01,  0.1,  0.08, 2, 0.8,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.6,  0.02, 0] },
+    params: [0.2,  0.01, FREQ_C4, 0.01,  0.1,  0.08, 2, 0.8,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.6,  0.02, 0] },
   { name: 'triangle-pad',
-    params: [0.2,  0.01, 261.63, 0.02,  0.18, 0.12, 1, 1.0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.55, 0.03, 0] },
+    params: [0.2,  0.01, FREQ_C4, 0.02,  0.18, 0.12, 1, 1.0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.55, 0.03, 0] },
   { name: 'sine-pad',
-    params: [0.18, 0.01, 261.63, 0.02,  0.2,  0.12, 0, 1.0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.5,  0.03, 0] },
+    params: [0.18, 0.01, FREQ_C4, 0.02,  0.2,  0.12, 0, 1.0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.5,  0.03, 0] },
   { name: 'buzzy-narrow',
-    params: [0.25, 0.01, 261.63, 0.005, 0.1,  0.06, 5, 0.2,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.7,  0.02, 0] },
+    params: [0.25, 0.01, FREQ_C4, 0.005, 0.1,  0.06, 5, 0.2,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0.7,  0.02, 0] },
 ];
 
 const BASS_ARCHETYPES: Archetype[] = [
   { name: 'triangle',
-    params: [0.6, 0.01, 261.63, 0,     0.15, 0.06, 1, 1.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.85, 0.02, 0] },
+    params: [0.6, 0.01, FREQ_C3, 0,     0.15, 0.06, 1, 1.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.85, 0.02, 0] },
   { name: 'square',
-    params: [0.5, 0.01, 261.63, 0,     0.14, 0.05, 5, 1.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.9,  0.02, 0] },
+    params: [0.5, 0.01, FREQ_C3, 0,     0.14, 0.05, 5, 1.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.9,  0.02, 0] },
   { name: 'saw',
-    params: [0.45,0.01, 261.63, 0,     0.12, 0.05, 2, 0.8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.85, 0.02, 0] },
+    params: [0.45,0.01, FREQ_C3, 0,     0.12, 0.05, 2, 0.8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.85, 0.02, 0] },
   { name: 'sub-sine',
-    params: [0.65,0.01, 261.63, 0,     0.18, 0.08, 0, 1.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.8,  0.02, 0] },
+    params: [0.65,0.01, FREQ_C3, 0,     0.18, 0.08, 0, 1.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.8,  0.02, 0] },
 ];
 
 const DRUM_ARCHETYPES: Archetype[] = [

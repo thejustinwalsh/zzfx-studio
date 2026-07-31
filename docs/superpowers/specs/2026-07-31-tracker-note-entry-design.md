@@ -14,15 +14,13 @@ In scope:
 - Inline effect editor opened with `Enter`.
 - Pointer drag: horizontal steps through scale degrees, vertical through
   octaves.
-- Fix the C-3 rest collision in bass voicing.
+- Fix the C-3 rest collision by tuning the bass channel to its own register.
+- Undo/redo for pattern edits and regenerations.
 
 Non-goals:
 
-- Undo/redo. Drag is reversible by dragging back, `Delete` affects one cell, and
-  every edit persists immediately. A history stack is a separate feature.
 - Enharmonic spelling. Notes are pitches; the grid renders sharps.
 - Copy/paste, block selection, pattern-length editing.
-- Retuning instruments per channel (see Follow-up).
 
 ## Note encoding
 
@@ -36,32 +34,60 @@ noteInt > 0 ? ZZFX.buildSamples(...) : []            // :134
 instrumentParameters[2] *= 2 ** ((noteInt - 12)/12)  // :131
 ```
 
-`0` is the rest sentinel and cannot carry a pitch. Every instrument is tuned to
-261.63 Hz (C4), and `BASE_OCTAVE_OFFSET = 4`, so note 12 is C4 and the usable
-range is note 1 (`C#3`) through 48 (`C-7`).
+`0` is the rest sentinel and cannot carry a pitch. Which octave note 12 lands on
+is therefore a property of the *instrument*, not of the format: an instrument
+tuned to 261.63 (C4) puts note 12 at C4, one tuned to 130.81 (C3) puts it at C3.
+Usable values run 1 to 48.
 
 ### The C-3 collision
 
 `noteToZzfxm(C, 3)` computes `0 + (3-4)*12 + 12 = 0` — the rest sentinel.
-`buildChord` voices bass at octave 3 ([chords.ts:122]), so any chord whose root
-is chromatic C encodes to silence in the bass channel. 40 key/scale/degree
-combinations are affected. In the key of C — the store's default — every tonic
-bass root is silent.
+`buildChord` voices bass at octave 3, so any chord whose root is chromatic C
+encoded to silence in the bass channel. 40 key/scale/degree combinations were
+affected. In the key of C — the store's default — every tonic bass root was
+silent.
 
-Fix: guard the bass voicings in `buildChord`. A root, third, or fifth computing
-to `<= 0` is raised one octave.
+The root cause is that all four channels were tuned to 261.63 (C4) while
+occupying different registers, forcing the bass into note values 0-11 where C
+lands on the reserved value. ZzFXM intends the frequency parameter to set a
+channel's register, with note values riding above it.
 
-```ts
-const lift = (v: number) => (v > 0 ? v : v + 12);
+Fix: tune the bass instrument to C3 and let its note values start at 12.
+
+| Bass @ oct 3 | value | before | after | intended |
+|---|---|---|---|---|
+| C3 | 12 | **C4** | C3 | C3 |
+| D3 | 2 → 14 | D3 | D3 | D3 |
+| ...  | | unchanged | unchanged | |
+
+Every other bass pitch is preserved exactly. `FREQ_C3` is derived as
+`FREQ_C4 / 2` rather than written as the rounded 130.81, which is off by 0.07
+cents — deriving it makes the retuning provably pitch-preserving instead of
+merely close.
+
+### Reading tuning back, instead of migrating
+
+Note names cannot be hardcoded to "12 is C4" once channels are tuned
+differently. `baseOctaveFromFreq` recovers a channel's base octave from its own
+instrument:
+
+```
+freq 261.63 → base octave 4      freq 130.81 → base octave 3
 ```
 
-This is deliberately surgical. It changes only the notes that were silent, needs
-no persist migration, and keeps `zzfxmToNoteName` honest. Already-saved songs
-keep their stored values and render as before; regenerating a pattern heals
-them.
+This is what makes the change safe without a persist migration. A song saved
+under the old tuning carries its own instrument array, so it keeps sounding as
+it always did *and* still labels correctly. A migration would gain almost
+nothing anyway: it preserves pitches by construction, and notes already lost to
+the bug are stored as `0`, indistinguishable from intended rests. Regenerating
+a pattern heals them.
 
-The editor treats `C-3` as unavailable rather than silently transposing, so
-typing `C` at `OCT 3` is a no-op with a brief flash on the register.
+Every tuning has exactly one unreachable note — the C of octave `base - 1`. The
+editor rejects it with a flash on the register rather than silently substituting
+a pitch. Tuning bass to C3 moves its hole from C3 down to C2, freeing the octave
+the channel actually plays in. Addressable octaves become `[base - 1, base + 3]`,
+so the register clamps when the cursor crosses into a differently tuned
+channel.
 
 ## Architecture
 
@@ -71,12 +97,15 @@ would make it unworkable. The grid moves out; `App.tsx` keeps audio ownership.
 
 ```
 src/engine/noteEntry.ts      NEW  pure entry/step math, no React
-src/engine/chords.ts          ~   bass voicing guard
-src/components/PatternGrid.tsx NEW grid render + cursor + input
-src/components/EffectEditor.tsx NEW inline effect popup
-src/store.ts                  ~   setNote / setEffect
-App.tsx                       ~   grid markup out, audio callbacks in
+src/engine/scales.ts          ~   tuning-aware encoding + note naming
+src/engine/instruments.ts     ~   bass archetypes tuned to C3
+src/engine/chords.ts          ~   bass voiced against its own base octave
+src/components/PatternGrid.tsx NEW grid render + cursor + input + effect editor
+src/store.ts                  ~   setNote / setEffect / undo history
+App.tsx                       ~   grid markup out, audio + undo keybinding in
 test/noteEntry.test.ts       NEW  node --import tsx --test
+test/history.test.ts         NEW  undo/redo model
+test/setup.ts                NEW  AudioContext + localStorage stubs
 ```
 
 The boundary: `PatternGrid` owns cursor state and writes song data through store
@@ -89,11 +118,14 @@ actions. It never touches the audio graph. It signals edits upward through
   pattern={currentPattern}
   effects={currentEffects}
   patternLabel={activePattern}
+  baseOctaves={baseOctaves}
   playbackRow={playbackRow}
   songKey={song.config.key}
   scale={song.config.scale}
   onEdit={(ch) => scheduleChannelRerender(ch)}
   onAudition={(ch, note) => auditionNote(ch, note)}
+  onBeginEdit={beginEdit}
+  onEndEdit={endEdit}
 />
 ```
 
@@ -133,9 +165,11 @@ path.
 | `Shift` + `A`–`G` | same, one semitone up (sharp) |
 | `K` / `S` / `H` | on CH3 only: kick / snare / hat |
 | `Delete` / `Backspace` | clear the field under the cursor |
-| `[` / `]` | octave register down / up, clamped 3–7 |
+| `[` / `]` | octave register down / up, clamped to the channel's range |
 | `Enter` | open the effect editor on an effect cell |
 | `Esc` | close the editor, or blur the grid |
+| `Ctrl`/`Cmd` + `Z` | undo (global, not grid-scoped) |
+| `Ctrl`/`Cmd` + `Shift` + `Z` | redo |
 
 Sharps are arithmetic, not special-cased: `Shift+E` is `F`, `Shift+B` is `C` of
 the next octave. Entering a note auto-advances the cursor down one row, the
@@ -245,14 +279,54 @@ devDependency; no new packages.
 Plus a regression test for the collision: generating across all 12 keys and 6
 scales yields no bass chord root encoded as 0.
 
-## Follow-up
+## Undo/redo
 
-The deeper register fix — tune the bass instrument to 130.81 Hz and shift its
-note values up an octave — is the structurally correct use of ZzFXM's frequency
-parameter and would remove the collision by construction. It is not done here
-because it makes `zzfxmToNoteName` an octave wrong for the bass channel unless
-display becomes instrument-aware, and it requires a persist migration for saved
-projects.
+Covers pattern edits and the regenerate buttons (channel, pattern, instrument).
+Regenerate-channel replaces 32 notes from one click and is the most destructive
+action in the app. Mixer, BPM and mute/solo stay out: they are non-destructive
+and continuously adjustable, so they would only make the history noisy.
+Generating or loading a different song clears the history — undoing across that
+boundary is meaningless.
 
-[chords.ts:122]: ../../../apps/zzfx-studio/src/engine/chords.ts
+History is session-only and excluded from `partializeState`, so song snapshots
+never reach localStorage.
+
+### Snapshots, not diffs
+
+A snapshot holds a reference to a whole `Song`. That is affordable *because*
+every edit is already an immutable update that clones only the channel it
+touches — an old song shares almost all of its structure with the current one,
+so a snapshot costs a handful of pointers rather than a copy. A test asserts
+this sharing directly, since it is the assumption the whole design rests on.
+
+`activePattern` rides along in the snapshot, so undo returns you to where the
+edit happened instead of silently altering a pattern you are not looking at.
+
+### Coalescing
+
+A drag writes a note every 12px. Without grouping, one gesture would cost twenty
+undos.
+
+```
+pointerdown → beginEdit('drag')   captures the song once
+   ...drag writes freely, history untouched...
+pointerup   → endEdit()           banks a single step
+```
+
+`record` is skipped while a transaction is open. A transaction that changed
+nothing leaves no trace. Single keystrokes take the untransacted path and record
+per edit.
+
+Undo replaces the whole song, so all four channels' audio is stale; the handler
+re-renders and hot-swaps every channel rather than the single-channel path used
+for ordinary edits.
+
+## Testing note
+
+Store-level tests need `AudioContext` and `localStorage`, because the store
+reaches zzfx through the engine barrel and zzfx constructs a context on import.
+`test/setup.ts` stubs both. `partializeState` is exported so the "history is
+never persisted" property can be asserted directly rather than by reaching into
+zustand internals.
+
 [App.tsx:460]: ../../../apps/zzfx-studio/App.tsx

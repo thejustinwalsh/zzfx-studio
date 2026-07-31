@@ -39,13 +39,17 @@ test('Shift+E is F and Shift+B is C of the next octave', () => {
   assert.equal(ne.letterToNote('b', true, 4), ne.letterToNote('c', false, 5));
 });
 
-test('C at octave 3 is rejected rather than encoded as a rest', () => {
-  // noteToZzfxm(C, 3) computes to 0, which ZzFXM reads as "no note".
+test('the unreachable C sits one octave below the channel tuning', () => {
+  // noteToZzfxm(C, base-1) computes to 0, which ZzFXM reads as "no note".
   assert.equal(scales.noteToZzfxm(0, 3), 0);
   assert.equal(ne.letterToNote('c', false, 3), null);
+  // A channel tuned to C3 moves that hole down to C2, freeing C3.
+  assert.equal(scales.noteToZzfxm(0, 2, 3), 0);
+  assert.equal(ne.letterToNote('c', false, 2, 3), null);
+  assert.equal(ne.letterToNote('c', false, 3, 3), 12);
 });
 
-test('the rest of octave 3 is enterable', () => {
+test('the rest of octave 3 is enterable on a C4-tuned channel', () => {
   assert.equal(ne.letterToNote('c', true, 3), 1);
   assert.equal(ne.letterToNote('b', false, 3), 11);
 });
@@ -194,4 +198,79 @@ test('regression: no bass chord root encodes to the rest sentinel', () => {
     }
   }
   assert.deepEqual(offenders, [], `voicings encoding as rests: ${offenders.length}`);
+});
+
+
+// --- instrument tuning / base octave -------------------------------------
+
+test('base octave is read back from the instrument frequency', () => {
+  assert.equal(scales.baseOctaveFromFreq(scales.FREQ_C4), 4);
+  assert.equal(scales.baseOctaveFromFreq(scales.FREQ_C3), 3);
+  assert.equal(scales.baseOctaveFromFreq(523.25), 5);
+  // Drum archetypes are tuned off-pitch; fall back rather than produce noise.
+  assert.equal(scales.baseOctaveFromFreq(0), scales.DEFAULT_BASE_OCTAVE);
+});
+
+test('note naming round-trips under any tuning', () => {
+  for (const base of [3, 4, 5]) {
+    for (let oct = base - 1; oct <= base + 3; oct++) {
+      for (let c = 0; c < 12; c++) {
+        const v = scales.noteToZzfxm(c, oct, base);
+        if (v < ne.MIN_NOTE || v > ne.MAX_NOTE) continue;
+        const expected =
+          KEYS[c] + (KEYS[c].length === 1 ? '-' : '') + oct;
+        assert.equal(
+          scales.zzfxmToNoteName(v, base), expected,
+          `base ${base}, ${KEYS[c]}${oct} -> value ${v}`
+        );
+      }
+    }
+  }
+});
+
+test('retuning bass to C3 preserves every pitch it could already play', () => {
+  // Note 12 sounds the instrument frequency; pitch = freq * 2^((n-12)/12).
+  const hz = (freq: number, n: number) => freq * 2 ** ((n - 12) / 12);
+  for (let c = 1; c < 12; c++) {          // skip C: it was the broken one
+    const before = hz(scales.FREQ_C4, scales.noteToZzfxm(c, 3));
+    const after = hz(scales.FREQ_C3, scales.noteToZzfxm(c, 3, 3));
+    assert.ok(
+      Math.abs(before - after) < 1e-9,
+      `${KEYS[c]}3 moved: ${before} -> ${after}`
+    );
+  }
+});
+
+test('the C that used to be silent now sounds an octave below middle C', () => {
+  const hz = (freq: number, n: number) => freq * 2 ** ((n - 12) / 12);
+  const v = scales.noteToZzfxm(0, 3, 3);
+  assert.equal(v, 12);                              // representable, not a rest
+  assert.ok(Math.abs(hz(scales.FREQ_C3, v) - scales.FREQ_C3) < 1e-9);
+});
+
+test('octave range tracks the tuning', () => {
+  assert.deepEqual(scales.octaveRangeFor(4), { min: 3, max: 7 });
+  assert.deepEqual(scales.octaveRangeFor(3), { min: 2, max: 6 });
+});
+
+test('clampOctave respects the channel tuning', () => {
+  assert.equal(ne.clampOctave(9, 4), 7);
+  assert.equal(ne.clampOctave(1, 4), 3);
+  assert.equal(ne.clampOctave(7, 3), 6);
+  assert.equal(ne.clampOctave(1, 3), 2);
+});
+
+test('regression: bass voicings never encode to the rest sentinel', () => {
+  const offenders: string[] = [];
+  for (const key of KEYS) {
+    for (const scale of SCALE_NAMES) {
+      const prog = chords.generateChordProgression('adventure', key, scale);
+      for (const chord of prog.chordAtRow) {
+        for (const field of ['root', 'third', 'fifth']) {
+          if (chord[field] <= 0) offenders.push(`${key} ${scale} ${field}`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(offenders, []);
 });

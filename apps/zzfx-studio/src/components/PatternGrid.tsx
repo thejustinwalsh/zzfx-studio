@@ -14,8 +14,8 @@ import { fonts, fontSize } from '../theme/typography';
 import { spacing } from '../theme/layout';
 import {
   EFFECT_CODES,
-  MAX_OCTAVE,
-  MIN_OCTAVE,
+  DEFAULT_BASE_OCTAVE,
+  clampOctave,
   cycleDrum,
   drumFromLetter,
   drumNoteToName,
@@ -25,6 +25,7 @@ import {
   letterToNote,
   nudgeDrum,
   octaveStep,
+  octaveRangeFor,
   scaleStep,
   zzfxmToNoteName,
 } from '../engine';
@@ -69,6 +70,10 @@ interface PatternGridProps {
   patternLabel: PatternLabel;
   songKey: NoteName;
   scale: ScaleName;
+  /** Octave each channel's note values are measured from, derived from how its
+   *  instrument is tuned. Keeps note names honest across differently tuned
+   *  channels and across songs saved under an older tuning. */
+  baseOctaves: number[];
   playbackRow: number | null;
   mutedChannels: Set<number>;
   explicitMutes: number[];
@@ -84,6 +89,9 @@ interface PatternGridProps {
   onEdit: (channel: number) => void;
   /** Fired only when playback is stopped — the host decides how to sound it. */
   onAudition: (channel: number, note: number) => void;
+  /** Bracket a burst of edits so it collapses into a single undo step. */
+  onBeginEdit: (label: string) => void;
+  onEndEdit: () => void;
   isPlaying: boolean;
   onScrollRef?: (ref: ScrollView | null) => void;
   onLayoutMetrics?: (m: { rowHeight: number; headerHeight: number; viewportHeight: number; contentHeight: number }) => void;
@@ -120,6 +128,7 @@ export function PatternGrid({
   patternLabel,
   songKey,
   scale,
+  baseOctaves,
   playbackRow,
   mutedChannels,
   explicitMutes,
@@ -133,6 +142,8 @@ export function PatternGrid({
   onSetEffect,
   onEdit,
   onAudition,
+  onBeginEdit,
+  onEndEdit,
   isPlaying,
   onScrollRef,
   onLayoutMetrics,
@@ -153,6 +164,16 @@ export function PatternGrid({
   useEffect(() => {
     setEditingEffect(false);
   }, [patternLabel]);
+
+  // The cursor's channel decides which tuning notes are entered against.
+  const cursorBase = baseOctaves[cursor.channel] ?? DEFAULT_BASE_OCTAVE;
+
+  // Channels are tuned differently, so the addressable octaves differ too.
+  // Clamp the register when the cursor crosses into a channel that cannot
+  // reach where it is currently pointed.
+  useEffect(() => {
+    setOctave((o) => clampOctave(o, cursorBase));
+  }, [cursorBase]);
 
   const noteAt = useCallback(
     (channel: number, row: number): number => pattern[channel]?.[row + 2] ?? 0,
@@ -307,10 +328,10 @@ export function PatternGrid({
         }
         return true;
       case '[':
-        setOctave((o) => Math.max(MIN_OCTAVE, o - 1));
+        setOctave((o) => clampOctave(o - 1, cursorBase));
         return true;
       case ']':
-        setOctave((o) => Math.min(MAX_OCTAVE, o + 1));
+        setOctave((o) => clampOctave(o + 1, cursorBase));
         return true;
     }
 
@@ -327,9 +348,10 @@ export function PatternGrid({
     }
 
     if (!isNoteLetter(e.key)) return false;
-    const note = letterToNote(e.key, e.shiftKey, octave);
+    const note = letterToNote(e.key, e.shiftKey, octave, cursorBase);
     if (note === null) {
-      // C-3 collides with the rest sentinel, and past C-7 is out of range.
+      // The C an octave below the channel's tuning collides with the rest
+      // sentinel, and past value 48 is out of range.
       flashReject();
       return true;
     }
@@ -426,10 +448,14 @@ export function PatternGrid({
       setFocused(true);
       setEditingEffect(false);
 
+      // Everything until pointer-up collapses into one undo step, so a drag
+      // that crosses twenty thresholds still costs a single ctrl-Z.
+      onBeginEdit('drag');
+
       const node = rowsRef.current as unknown as HTMLElement | null;
       node?.setPointerCapture?.(ne.pointerId);
     },
-    [localPoint, locateCell]
+    [localPoint, locateCell, onBeginEdit]
   );
 
   const handlePointerMove = useCallback((e: { nativeEvent: PointerEvent }) => {
@@ -473,11 +499,12 @@ export function PatternGrid({
   }, []);
 
   const handlePointerUp = useCallback((e: { nativeEvent: PointerEvent }) => {
+    if (drag.current) onEndEdit();
     drag.current = null;
     pointerOrigin.current = null;
     const node = rowsRef.current as unknown as HTMLElement | null;
     node?.releasePointerCapture?.(e.nativeEvent.pointerId);
-  }, []);
+  }, [onEndEdit]);
 
   // ---- Render ---------------------------------------------------------------
 
@@ -526,7 +553,12 @@ export function PatternGrid({
         >
           <View style={styles.rowNumCol}>
             <Pressable
-              onPress={() => setOctave((o) => (o >= MAX_OCTAVE ? MIN_OCTAVE : o + 1))}
+              onPress={() =>
+                setOctave((o) => {
+                  const { min, max } = octaveRangeFor(cursorBase);
+                  return o >= max ? min : o + 1;
+                })
+              }
               accessibilityRole="button"
               accessibilityLabel={`Octave ${octave}. Tap to change.`}
             >
@@ -647,7 +679,10 @@ export function PatternGrid({
                 </View>
                 {Array.from({ length: CHANNELS }, (_, ci) => {
                   const noteVal = noteAt(ci, row);
-                  const noteName = ci === 3 ? drumNoteToName(noteVal) : zzfxmToNoteName(noteVal);
+                  const noteName =
+                    ci === 3
+                      ? drumNoteToName(noteVal)
+                      : zzfxmToNoteName(noteVal, baseOctaves[ci] ?? DEFAULT_BASE_OCTAVE);
                   const fx = effectAt(ci, row);
                   const fxStr = effectToDisplayString(fx);
                   const isFlashing = flashChannels.has(ci);

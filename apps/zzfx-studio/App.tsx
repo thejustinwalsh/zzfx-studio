@@ -2,7 +2,7 @@ import { useRef, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMem
 import { ZZFX } from 'zzfx';
 import { useSharedValue } from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, TextInput, View, ScrollView } from 'react-native';
+import { Platform, StyleSheet, Text, TextInput, View, ScrollView } from 'react-native';
 import { AnimatedPressable } from './src/components/AnimatedPressable';
 import { colors, fonts, fontSize, spacing } from './src/theme';
 import {
@@ -39,6 +39,7 @@ import {
   SCALES,
   VIBE_CONFIG,
   codeToSong,
+  baseOctaveFromFreq,
 } from './src/engine';
 import { openTextFile } from './src/platform';
 import type { Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel } from './src/engine';
@@ -80,7 +81,7 @@ export default function App() {
   const {
     setSong, setVibe, setKey, setScale, setBpm, setSongLength,
     setActivePattern, toggleMute, toggleSolo, updateVolume,
-    generate, loadSong, renameSong,
+    generate, loadSong, renameSong, commitSong,
   } = useSongStore.getState();
 
   // Editable song name — local state for responsive typing, debounced to store
@@ -444,11 +445,11 @@ export default function App() {
     const currentSong = useSongStore.getState().song;
     if (!currentSong) return;
     const { pattern, effects } = regeneratePattern(currentSong, label);
-    setSong({
+    commitSong({
       ...currentSong,
       patterns: { ...currentSong.patterns, [label]: pattern },
       patternEffects: { ...currentSong.patternEffects, [label]: effects },
-    });
+    }, `regenerate pattern ${label}`);
     flashChannel([0, 1, 2, 3]);
   }, [flashChannel]);
 
@@ -465,14 +466,14 @@ export default function App() {
     if (audioGraphRef.current?.isPlaying) {
       setRenderingChannels(prev => new Set(prev).add(channelIndex));
       renderEngineRef.current.renderSongBuffers(newSong).then(buffers => {
-        setSong(newSong);
+        commitSong(newSong, 'regenerate channel');
         flashChannel([channelIndex]);
         setRenderingChannels(prev => { const next = new Set(prev); next.delete(channelIndex); return next; });
         channelBuffersRef.current[channelIndex] = buffers[channelIndex];
         audioGraphRef.current?.replaceChannel(channelIndex, buffers[channelIndex]);
       });
     } else {
-      setSong(newSong);
+      commitSong(newSong, 'regenerate channel');
       flashChannel([channelIndex]);
     }
   }, [flashChannel]);
@@ -489,7 +490,7 @@ export default function App() {
     if (audioGraphRef.current?.isPlaying) {
       setRenderingChannels(prev => new Set(prev).add(channelIndex));
       renderEngineRef.current.renderSongBuffers(newSong).then(buffers => {
-        setSong(newSong);
+        commitSong(newSong, 'regenerate instrument');
         useSongStore.getState().setChannelVolumes(prev => {
           const next = [...prev];
           next[channelIndex] = newVol;
@@ -500,7 +501,7 @@ export default function App() {
         audioGraphRef.current?.replaceChannel(channelIndex, buffers[channelIndex]);
       });
     } else {
-      setSong(newSong);
+      commitSong(newSong, 'regenerate instrument');
       useSongStore.getState().setChannelVolumes(prev => {
         const next = [...prev];
         next[channelIndex] = newVol;
@@ -583,6 +584,44 @@ export default function App() {
     if (samples.length > 0) zzfxP([samples]);
   }, []);
 
+  // Undo replaces the whole song, so every channel's audio is stale.
+  const rerenderAllChannels = useCallback(() => {
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
+    renderEngineRef.current.renderSongBuffers(currentSong).then(buffers => {
+      if (buffers.length === 0 || buffers[0][0].length === 0) return;
+      channelBuffersRef.current = buffers;
+      if (audioGraphRef.current?.isPlaying) {
+        const songDuration = buffers[0][0].length / 44100;
+        audioGraphRef.current.replaceAllChannels(
+          buffers,
+          songDuration,
+          useSongStore.getState().song?.config.bpm ?? 120
+        );
+      }
+    });
+  }, []);
+
+  // Undo/redo is global rather than grid-scoped — it also covers the
+  // regenerate buttons, which are reachable without ever focusing the grid.
+  const handleHistoryKey = useEffectEvent((e: KeyboardEvent) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod || e.key.toLowerCase() !== 'z') return false;
+    const { undo, redo } = useSongStore.getState();
+    const moved = e.shiftKey ? redo() : undo();
+    if (moved) rerenderAllChannels();
+    return true;
+  });
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (handleHistoryKey(e)) e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const handlePreviewInstrument = useCallback((channelIndex: number) => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong) return;
@@ -623,6 +662,11 @@ export default function App() {
       if (nameTimerRef.current) clearTimeout(nameTimerRef.current);
     };
   }, []);
+
+  const baseOctaves = useMemo(
+    () => (song?.instruments ?? []).map(p => baseOctaveFromFreq(p[2])),
+    [song?.instruments]
+  );
 
   const currentPattern = song && song.patterns[activePattern];
   const currentEffects = song?.patternEffects?.[activePattern];
@@ -894,6 +938,7 @@ export default function App() {
           pattern={currentPattern}
           effects={currentEffects}
           patternLabel={activePattern}
+          baseOctaves={baseOctaves}
           songKey={song!.config.key}
           scale={song!.config.scale}
           playbackRow={playbackRow}
@@ -909,6 +954,8 @@ export default function App() {
           onSetEffect={handleSetEffect}
           onEdit={scheduleChannelRerender}
           onAudition={handleAuditionNote}
+          onBeginEdit={useSongStore.getState().beginEdit}
+          onEndEdit={useSongStore.getState().endEdit}
           isPlaying={isPlaying}
           onScrollRef={(r) => { gridScrollRef.current = r; }}
           onLayoutMetrics={(m) => {

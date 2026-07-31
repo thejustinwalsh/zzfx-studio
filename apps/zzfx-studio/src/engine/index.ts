@@ -2,7 +2,10 @@ export { generateSong, regenerateForVibe, regenerateAllPatterns, regenerateWithN
 export { generateInstruments } from './instruments';
 export { zzfxP, ZZFXM, zzfxm, zzfxMChannels, unlockAudio, getAnalyser } from './zzfx';
 export { AudioGraph } from './audioGraph';
-export { CHROMATIC, SCALES, getScaleNotes, zzfxmToNoteName, noteToZzfxm } from './scales';
+export {
+  CHROMATIC, SCALES, getScaleNotes, zzfxmToNoteName, noteToZzfxm,
+  baseOctaveFromFreq, octaveRangeFor, DEFAULT_BASE_OCTAVE, FREQ_C3, FREQ_C4,
+} from './scales';
 export {
   MIN_NOTE, MAX_NOTE, MIN_OCTAVE, MAX_OCTAVE, REST, DRUM_RANGES,
   isNoteLetter, isDrumLetter, letterToNote, drumFromLetter,

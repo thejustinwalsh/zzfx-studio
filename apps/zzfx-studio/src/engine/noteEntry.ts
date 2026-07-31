@@ -1,4 +1,4 @@
-import { CHROMATIC, SCALES, noteToZzfxm } from './scales';
+import { CHROMATIC, SCALES, noteToZzfxm, octaveRangeFor, DEFAULT_BASE_OCTAVE } from './scales';
 import type { NoteName, ScaleName } from './types';
 
 // ZzFXM note bounds. 0 is the rest sentinel, so the lowest playable pitch is
@@ -6,12 +6,13 @@ import type { NoteName, ScaleName } from './types';
 export const MIN_NOTE = 1;
 export const MAX_NOTE = 48;
 
-export const MIN_OCTAVE = 3;
-export const MAX_OCTAVE = 7;
+// Octave bounds depend on how the channel is tuned — see octaveRangeFor.
+export const MIN_OCTAVE = octaveRangeFor(DEFAULT_BASE_OCTAVE).min;
+export const MAX_OCTAVE = octaveRangeFor(DEFAULT_BASE_OCTAVE).max;
 
 export const REST = 0;
 
-/** Letter keys to chromatic index. C3 is unreachable — it encodes to 0. */
+/** Letter keys to chromatic index. */
 const LETTER_CHROMATIC: Record<string, number> = {
   c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11,
 };
@@ -24,8 +25,12 @@ export function clampNote(note: number): number {
   return Math.min(MAX_NOTE, Math.max(MIN_NOTE, note));
 }
 
-export function clampOctave(octave: number): number {
-  return Math.min(MAX_OCTAVE, Math.max(MIN_OCTAVE, octave));
+export function clampOctave(
+  octave: number,
+  baseOctave: number = DEFAULT_BASE_OCTAVE
+): number {
+  const { min, max } = octaveRangeFor(baseOctave);
+  return Math.min(max, Math.max(min, octave));
 }
 
 /**
@@ -34,19 +39,21 @@ export function clampOctave(octave: number): number {
  * `sharp` raises by one semitone with no special casing, so Shift+E is F and
  * Shift+B is C of the next octave.
  *
- * Returns null when the result is not representable: C at octave 3 collides
- * with the rest sentinel, and anything past C7 is out of range. Callers should
- * reject the keystroke rather than substitute a different pitch.
+ * Returns null when the result is not representable: the C of octave
+ * `baseOctave - 1` collides with the rest sentinel, and anything past value 48
+ * is out of range. Callers should reject the keystroke rather than substitute a
+ * different pitch.
  */
 export function letterToNote(
   letter: string,
   sharp: boolean,
-  octave: number
+  octave: number,
+  baseOctave: number = DEFAULT_BASE_OCTAVE
 ): number | null {
   const chromatic = LETTER_CHROMATIC[letter.toLowerCase()];
   if (chromatic === undefined) return null;
 
-  const note = noteToZzfxm(chromatic + (sharp ? 1 : 0), octave);
+  const note = noteToZzfxm(chromatic + (sharp ? 1 : 0), octave, baseOctave);
   if (note < MIN_NOTE || note > MAX_NOTE) return null;
   return note;
 }

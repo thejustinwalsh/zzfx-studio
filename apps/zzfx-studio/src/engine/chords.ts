@@ -1,5 +1,8 @@
 import { VibeName, NoteName, ScaleName } from './types';
-import { CHROMATIC, SCALES, noteToZzfxm } from './scales';
+import { CHROMATIC, SCALES, noteToZzfxm, baseOctaveFromFreq, FREQ_C3 } from './scales';
+
+// The bass channel is tuned to C3, so its note values are measured from there.
+const BASS_BASE_OCTAVE = baseOctaveFromFreq(FREQ_C3);
 
 const ROWS = 32;
 const ROWS_PER_CHORD = 8; // 4 chords per 32-row pattern
@@ -72,13 +75,6 @@ function pickWeighted<T extends { weight: number }>(items: T[]): T {
   return items[items.length - 1];
 }
 
-// ZzFXM reserves note value 0 as the rest sentinel, so C at octave 3 —
-// which encodes to exactly 0 — would voice as silence instead of a pitch.
-// Raise any voicing that lands there by an octave.
-function lift(note: number): number {
-  return note > 0 ? note : note + 12;
-}
-
 // Build a triad from a scale degree
 function buildChord(
   degree: number,
@@ -109,12 +105,14 @@ function buildChord(
   const fifthOctaveAdj = fifthChromatic < chordRootChromatic ? 1 : 0;
 
   return {
-    root: lift(noteToZzfxm(chordRootChromatic, bassOctave)),
-    third: lift(noteToZzfxm(thirdChromatic, bassOctave + thirdOctaveAdj)),
-    fifth: lift(noteToZzfxm(fifthChromatic, bassOctave + fifthOctaveAdj)),
-    rootMelody: lift(noteToZzfxm(chordRootChromatic, melodyOctave)),
-    thirdMelody: lift(noteToZzfxm(thirdChromatic, melodyOctave + thirdOctaveAdj)),
-    fifthMelody: lift(noteToZzfxm(fifthChromatic, melodyOctave + fifthOctaveAdj)),
+    // Bass voicings are encoded against the bass channel's own tuning, so its
+    // notes ride above value 12 instead of colliding with the rest sentinel.
+    root: noteToZzfxm(chordRootChromatic, bassOctave, BASS_BASE_OCTAVE),
+    third: noteToZzfxm(thirdChromatic, bassOctave + thirdOctaveAdj, BASS_BASE_OCTAVE),
+    fifth: noteToZzfxm(fifthChromatic, bassOctave + fifthOctaveAdj, BASS_BASE_OCTAVE),
+    rootMelody: noteToZzfxm(chordRootChromatic, melodyOctave),
+    thirdMelody: noteToZzfxm(thirdChromatic, melodyOctave + thirdOctaveAdj),
+    fifthMelody: noteToZzfxm(fifthChromatic, melodyOctave + fifthOctaveAdj),
   };
 }
 
