@@ -208,7 +208,8 @@ export function MidiModal({
                       </View>
                       <Text style={styles.footnote}>
                         The top row of the device switches layouts too. In KEYS each quadrant is one
-                        channel, coloured to match its track.
+                        channel, coloured to match its track — every pad sounds, and the brighter
+                        quadrants are the armed ones whose notes also get written down.
                       </Text>
                     </>
                   )}

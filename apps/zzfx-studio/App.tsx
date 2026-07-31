@@ -843,14 +843,19 @@ function Studio() {
    *
    * The pad already carries a ZzFXM note for its own channel, so unlike a
    * keyboard there is nothing to convert — the quadrant chose the channel and
-   * the layout table chose the note. Everything else matches MIDI input:
-   * stopped it sounds, playing it lands on the nearest row.
+   * the layout table chose the note.
+   *
+   * Every pad sounds, armed or not: the quadrant is the routing, so refusing to
+   * play would just make half the grid feel broken. Arming decides whether a
+   * note is also written down, which is what the dimmer quadrants on the device
+   * are telling you — press one during playback and you hear it without
+   * committing it.
    */
   const handleLaunchpadNote = useCallback((channel: number, note: number) => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong) return;
 
-    if (audioGraphRef.current?.isPlaying) {
+    if (audioGraphRef.current?.isPlaying && armedChannels.includes(channel)) {
       void loadMidi().then(({ quantizeToRow }) => {
         const graph = audioGraphRef.current;
         if (!graph) return;
@@ -863,7 +868,7 @@ function Studio() {
     } else {
       handleAuditionNote(channel, note);
     }
-  }, [scheduleChannelRerender, handleAuditionNote]);
+  }, [scheduleChannelRerender, handleAuditionNote, armedChannels]);
 
   const handleLaunchpadPattern = useCallback((index: number) => {
     const label = useSongStore.getState().song?.patternOrder?.[index];
