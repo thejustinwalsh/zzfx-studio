@@ -42,17 +42,20 @@ const SECTIONS: Section[] = [
   },
   {
     title: 'NOTES',
-    note: 'Entering a note drops the cursor one row, so you can type a line straight down.',
+    note: 'Type a letter to enter a note and drop one row, so a line goes straight down. ENTER instead opens the note for nudging — the same two axes as dragging it.',
     bindings: [
       { keys: ['A', '…', 'G'], action: 'Enter that note at the current octave' },
       { keys: ['⇧', 'A…G'], chord: true, action: 'Enter it sharp' },
+      { keys: ['ENTER'], action: 'Start nudging the note, and finish' },
+      { keys: ['←', '→'], action: 'Step through the scale' },
+      { keys: ['↑', '↓'], action: 'Move it an octave' },
       { keys: ['[', ']'], action: 'Lower or raise the octave register' },
       { keys: ['DEL'], action: 'Clear the note under the cursor' },
     ],
   },
   {
     title: 'DRUMS',
-    note: 'The drum channel answers to mnemonics rather than pitches. Other letters do nothing there.',
+    note: 'The drum channel answers to mnemonics rather than pitches. Other letters do nothing there. ENTER nudges too: left and right change the drum, up and down its pitch.',
     bindings: [
       { keys: ['K'], action: 'Kick' },
       { keys: ['S'], action: 'Snare' },

@@ -125,8 +125,10 @@ function applySteps(
   return n;
 }
 
-// The cells no longer take focus at all -- they are plain Views -- so there is
-// no browser focus ring to suppress. The cursor box is the only selection.
+// The grid container is the one focusable element, so it is where the browser
+// would paint a focus ring -- a box around the whole grid, competing with the
+// cursor for the eye. The cursor cell is the only selection indicator.
+const NO_FOCUS_RING = Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null;
 
 // A drag across cells would otherwise paint a text selection over the grid.
 const NO_TEXT_SELECT = Platform.OS === 'web' ? ({ userSelect: 'none' } as object) : null;
@@ -170,7 +172,10 @@ export function PatternGrid({
   const [focused, setFocused] = useState(false);
   const [octave, setOctave] = useState(4);
   const [dragEnabled, setDragEnabled] = useState(prefersPointer);
-  const [editingEffect, setEditingEffect] = useState(false);
+  // Which field the cursor is *inside*, as opposed to merely sitting on. Null
+  // is the normal navigating state. A single value rather than a flag per field
+  // so the two edit modes cannot both be open.
+  const [editing, setEditing] = useState<CursorField | null>(null);
   const [rejectFlash, setRejectFlash] = useState(false);
 
   const containerRef = useRef<View | null>(null);
@@ -180,7 +185,7 @@ export function PatternGrid({
 
   // Pattern changed under us — park the cursor somewhere valid.
   useEffect(() => {
-    setEditingEffect(false);
+    setEditing(null);
   }, [patternLabel]);
 
   // The cursor's channel decides which tuning notes are entered against.
@@ -290,7 +295,7 @@ export function PatternGrid({
       }
       case 'Enter':
       case 'Escape':
-        setEditingEffect(false);
+        setEditing(null);
         return true;
       case 'Delete':
       case 'Backspace':
@@ -331,7 +336,9 @@ export function PatternGrid({
         return true;
       }
       case 'Enter':
-        if (field === 'effect') setEditingEffect(true);
+        // Both fields have an editor now: notes step by scale and octave,
+        // effects by code and value.
+        setEditing(field);
         return true;
       case 'Escape':
         setFocused(false);
@@ -378,6 +385,54 @@ export function PatternGrid({
     return true;
   });
 
+  /**
+   * Keys while inside a note cell.
+   *
+   * The same two axes the pointer drag uses, so the gestures teach each other:
+   * left and right walk the scale, up and down move by octave. Drums answer to
+   * the same axes but step between voices and their pitch variants instead,
+   * exactly as dragging a drum cell does.
+   *
+   * Without this, Enter on a note did nothing and the drag was the only way to
+   * nudge a pitch — which left the keyboard unable to do what the help modal
+   * says it can, and left the feature unreachable without a pointer.
+   */
+  const handleNoteKey = useEffectEvent((e: KeyboardEvent): boolean => {
+    const { row, channel } = cursor;
+    const current = noteAt(channel, row);
+    const step = (dir: 1 | -1, axis: 'h' | 'v') => {
+      const next =
+        axis === 'h'
+          ? channel === 3 ? cycleDrum(current, dir) : scaleStep(current, dir, songKey, scale)
+          : channel === 3 ? nudgeDrum(current, dir) : octaveStep(current, dir);
+      if (next !== current) writeNote(channel, row, next);
+    };
+
+    switch (e.key) {
+      case 'ArrowLeft':  step(-1, 'h'); return true;
+      case 'ArrowRight': step(1, 'h');  return true;
+      case 'ArrowDown':  step(-1, 'v'); return true;
+      case 'ArrowUp':    step(1, 'v');  return true;
+      case 'Enter':
+      case 'Escape':
+        setEditing(null);
+        return true;
+      case 'Delete':
+      case 'Backspace':
+        writeNote(channel, row, 0);
+        return true;
+    }
+
+    // Typing a letter still enters that note directly and leaves edit mode, so
+    // the quick path is never blocked by having opened the editor.
+    if (e.key.length === 1) {
+      const handled = handleGridKey(e);
+      if (handled) setEditing(null);
+      return handled;
+    }
+    return false;
+  });
+
   useEffect(() => {
     if (Platform.OS !== 'web' || !focused) return;
     const onKey = (e: KeyboardEvent) => {
@@ -389,7 +444,10 @@ export function PatternGrid({
       const tag = target?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
-      const handled = editingEffect ? handleEffectKey(e) : handleGridKey(e);
+      const handled =
+        editing === 'effect' ? handleEffectKey(e)
+        : editing === 'note' ? handleNoteKey(e)
+        : handleGridKey(e);
       if (handled) e.preventDefault();
     };
     // Capture, not bubble. React Native Web's PressResponder handles Enter and
@@ -400,7 +458,7 @@ export function PatternGrid({
     // anywhere in the tree can swallow the key.
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [focused, editingEffect]);
+  }, [focused, editing]);
 
   // Clicking outside the grid releases keyboard capture.
   useEffect(() => {
@@ -409,7 +467,7 @@ export function PatternGrid({
       const node = containerRef.current as unknown as HTMLElement | null;
       if (node && e.target instanceof Node && !node.contains(e.target)) {
         setFocused(false);
-        setEditingEffect(false);
+        setEditing(null);
       }
     };
     window.addEventListener('pointerdown', onDown);
@@ -482,7 +540,7 @@ export function PatternGrid({
 
       dragCtx.current.setCursorFn({ row: cell.row, channel: cell.channel, field: cell.field });
       setFocused(true);
-      setEditingEffect(false);
+      setEditing(null);
 
       // Drag manipulates notes only — pressing on an effect just moves the
       // cursor there, leaving ENTER to open the editor.
@@ -571,7 +629,7 @@ export function PatternGrid({
 
   return (
     <View
-      style={styles.container}
+      style={[styles.container, NO_FOCUS_RING]}
       ref={containerRef}
       collapsable={false}
       focusable={Platform.OS === 'web'}
@@ -767,16 +825,28 @@ export function PatternGrid({
                               ? (e) => { geom.current.noteFieldWidth = e.nativeEvent.layout.width; }
                               : undefined
                           }
-                          style={[styles.noteField, noteFocused && styles.cellCursor]}
+                          style={[
+                            styles.noteField,
+                            noteFocused && styles.cellCursor,
+                            noteFocused && editing === 'note' && styles.cellEditing,
+                          ]}
                           accessibilityLabel={`Row ${row}, ${CHANNEL_NAMES[ci]}, note ${noteName}`}
                         >
-                          <Text style={[styles.noteText, { color: noteColor }]}>{noteName}</Text>
+                          <Text
+                            style={[
+                              styles.noteText,
+                              { color: noteColor },
+                              noteFocused && editing === 'note' && styles.fxEditingText,
+                            ]}
+                          >
+                            {noteName}
+                          </Text>
                         </View>
                         <View
                           style={[
                             styles.fxField,
                             fxFocused && styles.cellCursor,
-                            fxFocused && editingEffect && styles.cellEditing,
+                            fxFocused && editing === 'effect' && styles.cellEditing,
                           ]}
                           accessibilityLabel={`Row ${row}, ${CHANNEL_NAMES[ci]}, effect ${fxStr}`}
                         >
@@ -784,7 +854,7 @@ export function PatternGrid({
                             style={[
                               styles.noteText,
                               { color: fx ? noteColor : colors.textDim },
-                              fxFocused && editingEffect && styles.fxEditingText,
+                              fxFocused && editing === 'effect' && styles.fxEditingText,
                             ]}
                           >
                             {fxStr}
