@@ -21,36 +21,132 @@ import type { NoteEffect, NoteName, ScaleName } from './types';
 import { DRUM_NOTES } from './types';
 import { getScaleNotes } from './scales';
 
-// --- ports ------------------------------------------------------------------
+// --- models -----------------------------------------------------------------
 
 /**
- * The device exposes two port pairs. Programmer-mode lighting and Custom mode
- * input travel on the one named MIDI; the DAW pair is for Session integration
- * and ignores our SysEx.
+ * The Launchpads that share this protocol.
+ *
+ * All three speak the same manufacturer header, the same LED command, the same
+ * decimal pad numbering and the same colour spec — the worked lighting example
+ * in each manual is byte-identical apart from one byte. What differs is that
+ * byte, the port names, and, on the Pro, how Programmer mode is reached: the
+ * Mini and X have a dedicated Live/Programmer toggle, while on the Pro
+ * Programmer is a *layout* selected like any other. Getting that wrong means
+ * the device simply never enters the mode, so it is spelled out per model
+ * rather than assumed from the Mini.
+ *
+ * Sources: the Programmer's Reference manual for each device.
  */
-export function isLaunchpadPort(name: string): boolean {
-  return /LPMiniMK3|Launchpad\s*Mini\s*MK3/i.test(name);
+export interface LaunchpadModel {
+  id: 'mini-mk3' | 'x' | 'pro-mk3';
+  name: string;
+  /** Sixth SysEx byte, after the Novation manufacturer ID. */
+  deviceId: number;
+  /** Matches this model's ports, DAW and DIN interfaces included. */
+  port: RegExp;
+  /** Body after the header that enters Programmer mode. */
+  enterProgrammer: readonly number[];
+  /** Body that returns the device to its standalone behaviour. */
+  leaveProgrammer: readonly number[];
+  /**
+   * Which layout each top-row button selects.
+   *
+   * The CC numbers are the same on every model but the legends printed on them
+   * are not — the Mini reads Session/Drums/Keys, the X reads Session/Note/
+   * Custom. Mapping per model keeps the button doing what it says.
+   */
+  layoutButtons: Readonly<Record<Layout, number>>;
 }
 
-export function isLaunchpadControlPort(name: string): boolean {
-  return isLaunchpadPort(name) && !/DAW/i.test(name);
-}
-
-// --- mode ------------------------------------------------------------------
-
-/** F0 00 20 29 02 0D — Novation, Launchpad Mini MK3. */
-export const SYSEX_HEADER = [0xf0, 0x00, 0x20, 0x29, 0x02, 0x0d] as const;
+/** Novation. Shared by every model here. */
+export const SYSEX_MANUFACTURER = [0x00, 0x20, 0x29, 0x02] as const;
+const SYSEX_START = 0xf0;
 const SYSEX_END = 0xf7;
 
-/** Command 0Eh selects Live (0) or Programmer (1) mode. */
-export const PROGRAMMER_MODE_ON = Uint8Array.from([...SYSEX_HEADER, 0x0e, 0x01, SYSEX_END]);
+export const LAUNCHPAD_MODELS: readonly LaunchpadModel[] = [
+  {
+    id: 'mini-mk3',
+    name: 'Launchpad Mini MK3',
+    deviceId: 0x0d,
+    port: /LPMiniMK3|Launchpad\s*Mini\s*MK3/i,
+    // Dedicated Live/Programmer switch: 0Eh, then 1 for Programmer, 0 for Live.
+    enterProgrammer: [0x0e, 0x01],
+    leaveProgrammer: [0x0e, 0x00],
+    // Printed: Session, Drums, Keys, User.
+    layoutButtons: { SESSION: 95, DRUMS: 96, KEYS: 97 },
+  },
+  {
+    id: 'x',
+    name: 'Launchpad X',
+    deviceId: 0x0c,
+    port: /LPX|Launchpad\s*X/i,
+    enterProgrammer: [0x0e, 0x01],
+    leaveProgrammer: [0x0e, 0x00],
+    // Printed: Session, Note, Custom, Capture MIDI. Note is the melodic one.
+    layoutButtons: { SESSION: 95, KEYS: 96, DRUMS: 97 },
+  },
+  {
+    id: 'pro-mk3',
+    name: 'Launchpad Pro MK3',
+    deviceId: 0x0e,
+    port: /LPProMK3|Launchpad\s*Pro\s*MK3/i,
+    // No mode toggle. Layout select is 00h <layout> <page> 00h, and Programmer
+    // is layout 11h. Session is DAW-mode only, so standalone returns to
+    // Note/Drum (04h) rather than Session.
+    enterProgrammer: [0x00, 0x11, 0x00, 0x00],
+    leaveProgrammer: [0x00, 0x04, 0x00, 0x00],
+    layoutButtons: { SESSION: 95, KEYS: 96, DRUMS: 97 },
+  },
+];
+
+/** The default when a device cannot be identified, and the one we can test. */
+export const DEFAULT_MODEL = LAUNCHPAD_MODELS[0];
+
+// --- ports ------------------------------------------------------------------
+
+/** Which model a port belongs to, or null if it is not a Launchpad. */
+export function modelForPort(name: string): LaunchpadModel | null {
+  return LAUNCHPAD_MODELS.find((m) => m.port.test(name)) ?? null;
+}
+
+export function isLaunchpadPort(name: string): boolean {
+  return modelForPort(name) !== null;
+}
 
 /**
- * Leaving the device in Programmer mode strands it dark and unresponsive until
- * it is power-cycled, so this must go out on unload, disconnect and teardown —
- * not only on the tidy path.
+ * True only for the port that honours Programmer-mode lighting.
+ *
+ * Every model exposes a DAW pair that ignores our SysEx, and the Pro adds a
+ * third DIN pair for its physical MIDI sockets. Matching the first
+ * Launchpad-looking port would hand us a device that never lights up.
  */
-export const PROGRAMMER_MODE_OFF = Uint8Array.from([...SYSEX_HEADER, 0x0e, 0x00, SYSEX_END]);
+export function isLaunchpadControlPort(name: string): boolean {
+  return isLaunchpadPort(name) && !/\bDAW\b|\bDIN\b/i.test(name);
+}
+
+// --- mode -------------------------------------------------------------------
+
+/** Header for a model: F0 00 20 29 02 <deviceId>. */
+export function sysexHeader(model: LaunchpadModel): number[] {
+  return [SYSEX_START, ...SYSEX_MANUFACTURER, model.deviceId];
+}
+
+function sysex(model: LaunchpadModel, body: readonly number[]): Uint8Array {
+  return Uint8Array.from([...sysexHeader(model), ...body, SYSEX_END]);
+}
+
+export function programmerModeOn(model: LaunchpadModel): Uint8Array {
+  return sysex(model, model.enterProgrammer);
+}
+
+/**
+ * Leaving a device in Programmer mode strands it dark and unresponsive until it
+ * is power-cycled, so this must go out on unload, disconnect and teardown — not
+ * only on the tidy path.
+ */
+export function programmerModeOff(model: LaunchpadModel): Uint8Array {
+  return sysex(model, model.leaveProgrammer);
+}
 
 /** Command 03h carries a batch of LED specs. */
 const CMD_LED = 0x03;
@@ -426,8 +522,9 @@ export function sessionPad(channel: number, pattern: number): number | null {
 
 // --- frame writer -----------------------------------------------------------
 
-/** Header, up to 81 five-byte RGB specs, terminator. */
-const FRAME_CAPACITY = SYSEX_HEADER.length + 1 + 81 * 5 + 1;
+/** Header (6), command (1), up to 81 five-byte RGB specs, terminator. */
+const HEADER_LENGTH = 6;
+const FRAME_CAPACITY = HEADER_LENGTH + 1 + 81 * 5 + 1;
 
 /**
  * Anything a frame can be written to.
@@ -457,9 +554,13 @@ export class LedSurface {
   private readonly want = new Int32Array(INDEX_LIMIT);
   private readonly shown = new Int32Array(INDEX_LIMIT);
 
-  constructor() {
-    this.bytes.set(SYSEX_HEADER, 0);
-    this.bytes[SYSEX_HEADER.length] = CMD_LED;
+  /**
+   * The model decides one byte of the header. Everything after it — the LED
+   * command, the pad numbering, the colour spec — is identical across models.
+   */
+  constructor(model: LaunchpadModel = DEFAULT_MODEL) {
+    this.bytes.set(sysexHeader(model), 0);
+    this.bytes[HEADER_LENGTH] = CMD_LED;
     this.invalidate();
   }
 
@@ -496,7 +597,7 @@ export class LedSurface {
    */
   flush(): number {
     const { bytes, want, shown } = this;
-    let n = SYSEX_HEADER.length + 1;
+    let n = HEADER_LENGTH + 1;
 
     for (let k = 0; k < ADDRESSABLE.length; k++) {
       const i = ADDRESSABLE[k];
@@ -520,7 +621,7 @@ export class LedSurface {
       }
     }
 
-    if (n === SYSEX_HEADER.length + 1) return 0;
+    if (n === HEADER_LENGTH + 1) return 0;
     bytes[n++] = SYSEX_END;
     return n;
   }
@@ -539,4 +640,4 @@ export const MAX_SPECS_PER_FRAME = 81;
 
 /** Bytes a full repaint of every addressable LED would occupy, all RGB. */
 export const MAX_FRAME_BYTES =
-  SYSEX_HEADER.length + 1 + MAX_SPECS_PER_FRAME * (2 + payloadLength(LED_RGB)) + 1;
+  HEADER_LENGTH + 1 + MAX_SPECS_PER_FRAME * (2 + payloadLength(LED_RGB)) + 1;

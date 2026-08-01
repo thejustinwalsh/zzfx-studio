@@ -155,8 +155,8 @@ export function MidiModal({
                 <View style={styles.section}>
                   <Text style={styles.sectionTitle}>LAUNCHPAD</Text>
                   <Text style={styles.note}>
-                    Lighting the pads needs SysEx, a separate and heavier browser permission than
-                    note input — so it is asked for only here.
+                    Launchpad Mini MK3, X and Pro MK3. Lighting the pads needs SysEx, a separate
+                    and heavier browser permission than note input — so it is asked for only here.
                   </Text>
 
                   <AnimatedPressable

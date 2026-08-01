@@ -2,7 +2,7 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
 
 import { loadLaunchpad } from '../engine/launchpadLoader';
 import type { LaunchpadEvent, LaunchpadSession, LaunchpadViewState } from '../engine/launchpadDevice';
-import { CC_DOWN, CC_DRUMS, CC_KEYS, CC_SESSION, CC_UP, type Layout } from '../engine/launchpad';
+import { CC_DOWN, CC_UP, DEFAULT_MODEL, type LaunchpadModel, type Layout } from '../engine/launchpad';
 import { DEFAULT_BASE_OCTAVE, octaveRangeFor } from '../engine/scales';
 import type { NoteEffect, PatternLabel, Song } from '../engine/types';
 
@@ -14,16 +14,18 @@ const NO_PADS: ReadonlySet<number> = new Set<number>();
 type LaunchpadModule = Awaited<ReturnType<typeof loadLaunchpad>>;
 
 /**
- * Which layout each top-row button selects.
+ * Which layout a top-row button selects, for the connected model.
  *
- * The buttons are printed on the hardware: Session, Drums, Keys, User. The four
- * CCs before them are the arrows, which drive the octave.
+ * Inverted from the model's own table rather than hard-coded: the CC numbers
+ * are the same on every Launchpad but the legends printed on them are not, so
+ * the button that says Keys is a different CC on a Mini than on an X.
  */
-const LAYOUT_BUTTONS: Record<number, Layout> = {
-  [CC_SESSION]: 'SESSION',
-  [CC_DRUMS]: 'DRUMS',
-  [CC_KEYS]: 'KEYS',
-};
+function layoutForButton(model: LaunchpadModel, cc: number): Layout | null {
+  for (const [layout, button] of Object.entries(model.layoutButtons)) {
+    if (button === cc) return layout as Layout;
+  }
+  return null;
+}
 
 export interface UseLaunchpadOptions {
   song: Song | null;
@@ -61,6 +63,7 @@ export interface LaunchpadControls {
  */
 export function useLaunchpad(opts: UseLaunchpadOptions): LaunchpadControls {
   const [module, setModule] = useState<LaunchpadModule | null>(null);
+  const [model, setModel] = useState<LaunchpadModel>(DEFAULT_MODEL);
   const [wanted, setWanted] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [deviceName, setDeviceName] = useState<string | null>(null);
@@ -122,7 +125,7 @@ export function useLaunchpad(opts: UseLaunchpadOptions): LaunchpadControls {
   const handleEvent = useEffectEvent((event: LaunchpadEvent) => {
     if (event.kind === 'top') {
       if (!event.pressed) return;
-      const picked = LAYOUT_BUTTONS[event.index];
+      const picked = layoutForButton(model, event.index);
       if (picked) { setLayout(picked); return; }
 
       if (event.index === CC_UP || event.index === CC_DOWN) {
@@ -201,6 +204,7 @@ export function useLaunchpad(opts: UseLaunchpadOptions): LaunchpadControls {
         }
         sessionRef.current = session;
         setModule(mod);
+        setModel(session.model);
         setDeviceName(session.deviceName);
         setEnabled(true);
       } catch (err) {
@@ -241,9 +245,10 @@ export function useLaunchpad(opts: UseLaunchpadOptions): LaunchpadControls {
       queuedPattern: null,
       patternFill,
       octave,
+      model,
     };
     session.render(state);
-  }, [enabled, tables, layout, armed, held, patternFill, activeIndex, octave]);
+  }, [enabled, tables, layout, armed, held, patternFill, activeIndex, octave, model]);
 
   return {
     supported,

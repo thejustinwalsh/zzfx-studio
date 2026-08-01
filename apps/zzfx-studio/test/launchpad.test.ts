@@ -31,10 +31,72 @@ test('other controllers are not mistaken for a Launchpad', () => {
 
 // --- mode frames, byte for byte ---------------------------------------------
 
-test('the mode frames match the reference manual exactly', () => {
-  // F0 00 20 29 02 0D 0E <mode> F7
-  assert.equal(hex(lp.PROGRAMMER_MODE_ON), 'f0 00 20 29 02 0d 0e 01 f7');
-  assert.equal(hex(lp.PROGRAMMER_MODE_OFF), 'f0 00 20 29 02 0d 0e 00 f7');
+test('every model reaches programmer mode the way its manual says', () => {
+  // The Mini and X have a dedicated Live/Programmer toggle. The Pro has none:
+  // Programmer is layout 11h, selected like any other, and standalone returns
+  // to Note/Drum because Session is DAW-mode only. Sending the Mini's toggle
+  // to a Pro would silently do nothing at all.
+  const byId = (id: string) => lp.LAUNCHPAD_MODELS.find((m: any) => m.id === id);
+
+  assert.equal(hex(lp.programmerModeOn(byId('mini-mk3'))), 'f0 00 20 29 02 0d 0e 01 f7');
+  assert.equal(hex(lp.programmerModeOff(byId('mini-mk3'))), 'f0 00 20 29 02 0d 0e 00 f7');
+  assert.equal(hex(lp.programmerModeOn(byId('x'))), 'f0 00 20 29 02 0c 0e 01 f7');
+  assert.equal(hex(lp.programmerModeOff(byId('x'))), 'f0 00 20 29 02 0c 0e 00 f7');
+  assert.equal(hex(lp.programmerModeOn(byId('pro-mk3'))), 'f0 00 20 29 02 0e 00 11 00 00 f7');
+  assert.equal(hex(lp.programmerModeOff(byId('pro-mk3'))), 'f0 00 20 29 02 0e 00 04 00 00 f7');
+});
+
+test('the device id is the only thing that differs in the header', () => {
+  for (const m of lp.LAUNCHPAD_MODELS) {
+    assert.deepEqual(lp.sysexHeader(m).slice(0, 5), [0xf0, 0x00, 0x20, 0x29, 0x02], m.name);
+    assert.equal(lp.sysexHeader(m)[5], m.deviceId, m.name);
+  }
+  assert.deepEqual(lp.LAUNCHPAD_MODELS.map((m: any) => m.deviceId), [0x0d, 0x0c, 0x0e]);
+});
+
+test('every model is identified from its own port', () => {
+  for (const [port, id] of [['LPMiniMK3 MIDI Out', 'mini-mk3'], ['LPX MIDI Out', 'x'], ['LPProMK3 MIDI Out', 'pro-mk3']] as const) {
+    assert.equal(lp.modelForPort(port)?.id, id, port);
+    assert.equal(lp.isLaunchpadControlPort(port), true, port);
+  }
+  assert.equal(lp.modelForPort('Arturia KeyStep'), null);
+});
+
+test('the DAW and DIN interfaces are refused on every model', () => {
+  // Each model exposes a DAW pair that ignores our SysEx; the Pro adds a DIN
+  // pair for its sockets. Taking one connects to a device that never lights.
+  for (const port of ['LPMiniMK3 DAW Out', 'LPX DAW Out', 'LPProMK3 DAW Out', 'LPProMK3 DIN Out']) {
+    assert.equal(lp.isLaunchpadPort(port), true, `${port} is still a Launchpad`);
+    assert.equal(lp.isLaunchpadControlPort(port), false, `${port} must not be used for control`);
+  }
+});
+
+test('the LED frame header follows the model', () => {
+  for (const m of lp.LAUNCHPAD_MODELS) {
+    const surf = new lp.LedSurface(m);
+    assert.ok(surf.flush() > 0);
+    assert.equal(
+      hex([...surf.bytes.subarray(0, 7)]),
+      `f0 00 20 29 02 ${m.deviceId.toString(16).padStart(2, '0')} 03`,
+      m.name
+    );
+  }
+});
+
+test("layouts sit on each model's own printed buttons", () => {
+  const byId = (id: string) => lp.LAUNCHPAD_MODELS.find((m: any) => m.id === id);
+  assert.deepEqual(byId('mini-mk3').layoutButtons, { SESSION: 95, DRUMS: 96, KEYS: 97 });
+  // The X reads Session, Note, Custom — Note is the melodic one, so KEYS moves.
+  assert.deepEqual(byId('x').layoutButtons, { SESSION: 95, KEYS: 96, DRUMS: 97 });
+
+  for (const m of lp.LAUNCHPAD_MODELS) {
+    const ccs = Object.values(m.layoutButtons) as number[];
+    assert.equal(new Set(ccs).size, 3, `${m.name} reuses a button`);
+    for (const cc of ccs) {
+      assert.ok((lp.TOP_CC as readonly number[]).includes(cc), `${m.name}: ${cc} is not top-row`);
+      assert.equal((lp.ARROW_CC as readonly number[]).includes(cc), false, `${m.name} put a layout on an arrow`);
+    }
+  }
 });
 
 // --- grid geometry ----------------------------------------------------------

@@ -23,6 +23,7 @@ const baseState = (over: Record<string, unknown> = {}) => ({
   queuedPattern: null,
   patternFill: [],
   octave: 4,
+  model: lp.DEFAULT_MODEL,
   ...over,
 });
 
@@ -194,9 +195,9 @@ test('the top row shows which layout is active', () => {
   dev.renderLaunchpad(s, baseState({ layout: 'KEYS' }));
   const bright = lp.scaleRgb(dev.CURSOR_CELL, dev.LEVEL_ACTIVE);
   const dim = lp.scaleRgb(dev.CURSOR_CELL, dev.LEVEL_IDLE);
-  assert.equal(s.get(lp.CC_KEYS), bright, 'KEYS should be lit');
-  assert.equal(s.get(lp.CC_SESSION), dim, 'SESSION should be dim');
-  assert.equal(s.get(lp.CC_DRUMS), dim, 'DRUMS should be dim');
+  assert.equal(s.get(lp.DEFAULT_MODEL.layoutButtons.KEYS), bright, 'KEYS should be lit');
+  assert.equal(s.get(lp.DEFAULT_MODEL.layoutButtons.SESSION), dim, 'SESSION should be dim');
+  assert.equal(s.get(lp.DEFAULT_MODEL.layoutButtons.DRUMS), dim, 'DRUMS should be dim');
 });
 
 test('no layout is bound to an arrow', () => {

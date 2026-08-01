@@ -20,13 +20,12 @@ import {
   LOGO_CC,
   LedSurface,
   OFF,
-  PROGRAMMER_MODE_OFF,
-  PROGRAMMER_MODE_ON,
+  DEFAULT_MODEL,
+  modelForPort,
+  programmerModeOff,
+  programmerModeOn,
   SCENE_CC,
   CC_DOWN,
-  CC_DRUMS,
-  CC_KEYS,
-  CC_SESSION,
   CC_UP,
   TOP_CC,
   buildKeysLayout,
@@ -41,6 +40,7 @@ import {
   sessionCell,
   sessionPad,
   type Layout,
+  type LaunchpadModel,
   type MidiSink,
 } from './launchpad';
 import type { NoteEffect, NoteName, ScaleName } from './types';
@@ -251,6 +251,8 @@ export interface LaunchpadViewState {
   patternFill: readonly (readonly boolean[])[];
   /** The tracker's octave, shared with the grid. */
   octave: number;
+  /** Decides which top-row buttons carry the layouts. */
+  model: LaunchpadModel;
 }
 
 /**
@@ -260,11 +262,7 @@ export interface LaunchpadViewState {
  * legend on the device lie about its own buttons. The arrows drive the octave
  * instead, which is what an arrow on an instrument usually does.
  */
-const TOP_LAYOUT_BUTTONS: Record<Layout, number> = {
-  SESSION: CC_SESSION,
-  DRUMS: CC_DRUMS,
-  KEYS: CC_KEYS,
-};
+
 
 /**
  * Paint the whole surface for a state. Writes only; the caller flushes, and the
@@ -275,7 +273,7 @@ export function renderLaunchpad(surface: LedSurface, state: LaunchpadViewState):
 
   // The top row selects the layout, lit in the accent so it never reads as a
   // channel. Only the active one is bright.
-  for (const [layout, cc] of Object.entries(TOP_LAYOUT_BUTTONS)) {
+  for (const [layout, cc] of Object.entries(state.model.layoutButtons)) {
     const on = state.layout === (layout as Layout);
     surface.set(cc, scaleRgb(CURSOR_CELL, on ? LEVEL_ACTIVE : LEVEL_IDLE));
   }
@@ -356,11 +354,13 @@ function renderInstrument(surface: LedSurface, state: LaunchpadViewState): void 
 export interface LaunchpadPorts {
   input: MIDIInput;
   output: MIDIOutput;
+  model: LaunchpadModel;
 }
 
 export interface LaunchpadSession {
   readonly surface: LedSurface;
   readonly deviceName: string;
+  readonly model: LaunchpadModel;
   /** Repaint from a state and transmit whatever changed. */
   render(state: LaunchpadViewState): void;
   /** Swap the active layout's tables, e.g. when the song's key changes. */
@@ -382,7 +382,11 @@ export function findLaunchpadPorts(access: MIDIAccess): LaunchpadPorts | null {
 
   const input = [...inputs.values()].find((p) => isLaunchpadControlPort(p.name ?? ''));
   const output = [...outputs.values()].find((p) => isLaunchpadControlPort(p.name ?? ''));
-  return input && output ? { input, output } : null;
+  if (!input || !output) return null;
+  // Identify from the port name: it decides the SysEx device byte, and on the
+  // Pro it decides how Programmer mode is entered at all.
+  const model = modelForPort(input.name ?? '') ?? DEFAULT_MODEL;
+  return { input, output, model };
 }
 
 export function isSysexSupported(): boolean {
@@ -411,14 +415,14 @@ export async function openLaunchpad(opts: OpenLaunchpadOptions): Promise<Launchp
   const ports = findLaunchpadPorts(access);
   if (!ports) throw new Error('No Launchpad Mini MK3 found. Check it is plugged in and powered.');
 
-  const { input } = ports;
+  const { input, model } = ports;
   // See MidiSink: the DOM lib under-types what send accepts.
   const output = ports.output as unknown as MidiSink & MIDIPort;
-  const surface = new LedSurface();
+  const surface = new LedSurface(model);
   let tables = opts.tables;
   let disposed = false;
 
-  output.send(PROGRAMMER_MODE_ON);
+  output.send(programmerModeOn(model));
   // The device's own LED state is unknown on entry, so the first frame must be
   // a full repaint rather than a diff against an assumed-dark grid.
   surface.invalidate();
@@ -434,7 +438,7 @@ export async function openLaunchpad(opts: OpenLaunchpadOptions): Promise<Launchp
     try {
       surface.clear();
       surface.send(output);
-      output.send(PROGRAMMER_MODE_OFF);
+      output.send(programmerModeOff(model));
     } catch {
       // The port is already gone — nothing left to restore.
     }
@@ -458,7 +462,8 @@ export async function openLaunchpad(opts: OpenLaunchpadOptions): Promise<Launchp
 
   return {
     surface,
-    deviceName: input.name ?? 'Launchpad Mini MK3',
+    model,
+    deviceName: input.name ?? model.name,
     render(state) {
       renderLaunchpad(surface, state);
       surface.send(output);
