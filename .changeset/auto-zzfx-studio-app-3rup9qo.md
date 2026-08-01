@@ -5,6 +5,27 @@
 > Branch: claude/tracker-note-entry-def3a5
 > PR: https://github.com/thejustinwalsh/zzfx-studio/pull/7
 
+### 37e06c57b73c7b18735f060083593f3746aec670
+feat: notes get an editor too, and kill the grid-wide focus ring
+Enter on a note did nothing -- only effects had an editor -- so the keyboard
+could not nudge a pitch at all and the pointer drag was the only way. Enter now
+opens the note on the same two axes the drag uses: left and right walk the
+scale, up and down move by octave. Drums follow the same axes, stepping between
+voices and their pitch variants, exactly as dragging a drum cell does. Typing a
+letter still enters that note directly and closes the editor, so the quick path
+is never blocked.
+
+editingEffect becomes editing: CursorField | null, so the two modes cannot both
+be open and each cell knows when it is the one being edited.
+
+The focus ring was mine from the previous commit: moving focus off the cells
+and onto the container moved the browser's outline with it, drawing a box round
+the whole grid. The suppression moves to the container, where focus now lives.
+
+Help modal updated to match -- it already claimed ENTER worked.
+Files: apps/zzfx-studio/src/components/HelpModal.tsx, apps/zzfx-studio/src/components/PatternGrid.tsx
+Stats: 2 files changed, 90 insertions(+), 17 deletions(-)
+
 ### 060cf2538f4702cd2709dcf59e45642ae6765470
 fix: grid cells are not buttons
 Enter on an effect cell flashed orange and reverted, and the cursor jumped.
