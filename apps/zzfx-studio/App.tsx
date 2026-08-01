@@ -51,6 +51,7 @@ import {
 } from './src/engine';
 import { shareCodeFromUrl, SHARE_PARAM, shouldShowMiniPlayer, loadShareCodec, prefetchShareCodec } from './src/engine/share';
 import { loadMidi } from './src/engine/midiLoader';
+import { toggleArmed } from './src/engine/arming';
 import { useLaunchpad } from './src/hooks/useLaunchpad';
 import { EmbedPlayer } from './src/screens/EmbedPlayer';
 import { openTextFile } from './src/platform';
@@ -859,9 +860,9 @@ function Studio() {
   useEffect(() => () => { midiSessionRef.current?.dispose(); }, []);
 
   const toggleArm = useCallback((ch: number) => {
-    setArmedChannels((prev) =>
-      prev.includes(ch) ? prev.filter((c) => c !== ch) : [...prev, ch]
-    );
+    // The arm column on the device and the on-screen buttons share this, so
+    // both toggle exactly one channel and agree about the result.
+    setArmedChannels((prev) => toggleArmed(prev, ch));
   }, []);
 
   /**

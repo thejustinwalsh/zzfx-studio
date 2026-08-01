@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 
 import * as midiMod from '../src/engine/midi';
 import * as scalesMod from '../src/engine/scales';
+import * as armingMod from '../src/engine/arming';
 
 const midi = (midiMod as any).default ?? midiMod;
 const scales = (scalesMod as any).default ?? scalesMod;
+const arming = (armingMod as any).default ?? armingMod;
 
 // --- message decoding -------------------------------------------------------
 
@@ -150,4 +152,30 @@ test('flooring instead of rounding would drift a row late', () => {
 
 test('support detection does not throw when the API is absent', () => {
   assert.equal(typeof midi.isMidiSupported(), 'boolean');
+});
+
+// --- arming ------------------------------------------------------------------
+
+test('arming toggles one channel and leaves the rest alone', () => {
+  // The device's arm column and the on-screen buttons both go through this, so
+  // pressing one must never disturb a channel it was not pointed at.
+  assert.deepEqual(arming.toggleArmed([], 2), [2]);
+  assert.deepEqual(arming.toggleArmed([2], 2), [], 'pressing again disarms');
+  assert.deepEqual(arming.toggleArmed([0, 2], 1), [0, 1, 2], 'inserted in order');
+  assert.deepEqual(arming.toggleArmed([0, 1, 2], 1), [0, 2], 'removed without touching neighbours');
+});
+
+test('every channel can be armed independently, in any order', () => {
+  let armed: number[] = [];
+  for (const ch of [3, 0, 2, 1]) armed = arming.toggleArmed(armed, ch);
+  assert.deepEqual(armed, [0, 1, 2, 3], 'all four armed, playable live');
+  for (const ch of [1, 3]) armed = arming.toggleArmed(armed, ch);
+  assert.deepEqual(armed, [0, 2], 'disarming two leaves exactly the other two');
+});
+
+test('the input array is never mutated', () => {
+  const before = [0, 1];
+  const after = arming.toggleArmed(before, 2);
+  assert.deepEqual(before, [0, 1], 'toggling edited the caller\'s array');
+  assert.notEqual(after, before);
 });
