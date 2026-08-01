@@ -5,6 +5,38 @@
 > Branch: claude/tracker-note-entry-def3a5
 > PR: https://github.com/thejustinwalsh/zzfx-studio/pull/7
 
+### 9dc63711ea5a1478357643469bda29923c35c25d
+fix: drums vary again instead of bubbling
+The kick was given a sine body and a steep downward slide, which is a
+descending pure tone -- a bubble, not a drum. Measured against the archetype it
+came from: tonality 112 where the archetype sits at 3.5, with the snare at 54.
+
+The other half was worse and less obvious. Every parameter was assigned
+outright rather than adjusted, so all five drum archetypes collapsed into the
+same three sounds: standard, boomy and metallic kicks all rendered identically,
+230ms each, and generating a song stopped varying its drums at all.
+
+Each voice is now a nudge of whatever archetype it was handed -- pitch,
+envelope and level -- and never touches shape, curve or slide. Pitch is the one
+parameter needing care: shape 4 is sin(t**3), so its broadband character comes
+from phase accelerating fast, and taking the frequency far enough down turns
+the same shape into an audible sweep. Swept the parameter and it stays
+broadband to about 0.65x and goes tonal below; steepening the slide tips it
+over on its own. So the kick drops to 0.65x with the archetype's own slide left
+alone, and gets its weight from a tail nearly twice as long.
+
+Tonality is now 2.4-3.5 across every voice and archetype, against 2.8-3.6 for
+what shipped. The voices separate by envelope instead: about 5x between kick
+and hat, which is what the ear uses anyway, since shape 4 measures the same
+brightness at any pitch -- the reason the original three sounded alike.
+
+Tests measure spectral peak-to-mean rather than brightness, because a
+descending sine and a noise burst can share a centroid and sound nothing alike.
+Three of the five fail against the previous implementation, naming the kick's
+tonality as the cause.
+Files: apps/zzfx-studio/src/engine/instruments.ts, apps/zzfx-studio/test/drums.test.ts
+Stats: 2 files changed, 138 insertions(+), 21 deletions(-)
+
 ### 6fecfead61a65cd1fac0899ee16cc9b43defaac8
 fix: four defects from adversarial review
 Stale audio: debouncing only delays the start of a render, so two can be in
