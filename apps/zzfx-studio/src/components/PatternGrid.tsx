@@ -125,9 +125,8 @@ function applySteps(
   return n;
 }
 
-// The browser's focus ring would sit alongside the tracker cursor and read as a
-// second, competing selection. The cursor box is the only selection indicator.
-const NO_FOCUS_RING = Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null;
+// The cells no longer take focus at all -- they are plain Views -- so there is
+// no browser focus ring to suppress. The cursor box is the only selection.
 
 // A drag across cells would otherwise paint a text selection over the grid.
 const NO_TEXT_SELECT = Platform.OS === 'web' ? ({ userSelect: 'none' } as object) : null;
@@ -395,9 +394,10 @@ export function PatternGrid({
     };
     // Capture, not bubble. React Native Web's PressResponder handles Enter and
     // Space on every Pressable and calls stopPropagation() unconditionally, so
-    // a bubble-phase listener never sees them — the cells are Pressables, which
-    // is why Enter did nothing on the cell you had just clicked. Capture runs
-    // on the way down, before the responder can swallow it.
+    // a bubble-phase listener never sees them. The cells are plain Views now,
+    // but the header buttons around the grid are still Pressables and any of
+    // them can hold focus — capture runs on the way down, before a responder
+    // anywhere in the tree can swallow the key.
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [focused, editingEffect]);
@@ -761,36 +761,23 @@ export function PatternGrid({
                   return (
                     <View key={ci} style={[styles.channelCol, isFlashing && styles.channelFlash]}>
                       <View style={styles.cellRow}>
-                        <Pressable
-                          focusable={false}
+                        <View
                           onLayout={
                             row === 0 && ci === 0
                               ? (e) => { geom.current.noteFieldWidth = e.nativeEvent.layout.width; }
                               : undefined
                           }
-                          style={[styles.noteField, NO_FOCUS_RING, noteFocused && styles.cellCursor]}
-                          onPress={() => {
-                            setFocused(true);
-                            setEditingEffect(false);
-                            setCursor({ row, channel: ci, field: 'note' });
-                          }}
+                          style={[styles.noteField, noteFocused && styles.cellCursor]}
                           accessibilityLabel={`Row ${row}, ${CHANNEL_NAMES[ci]}, note ${noteName}`}
                         >
                           <Text style={[styles.noteText, { color: noteColor }]}>{noteName}</Text>
-                        </Pressable>
-                        <Pressable
-                          focusable={false}
+                        </View>
+                        <View
                           style={[
                             styles.fxField,
-                            NO_FOCUS_RING,
                             fxFocused && styles.cellCursor,
                             fxFocused && editingEffect && styles.cellEditing,
                           ]}
-                          onPress={() => {
-                            setFocused(true);
-                            setCursor({ row, channel: ci, field: 'effect' });
-                            setEditingEffect(false);
-                          }}
                           accessibilityLabel={`Row ${row}, ${CHANNEL_NAMES[ci]}, effect ${fxStr}`}
                         >
                           <Text
@@ -802,7 +789,7 @@ export function PatternGrid({
                           >
                             {fxStr}
                           </Text>
-                        </Pressable>
+                        </View>
                       </View>
                     </View>
                   );
