@@ -5,6 +5,38 @@
 > Branch: claude/tracker-note-entry-def3a5
 > PR: https://github.com/thejustinwalsh/zzfx-studio/pull/7
 
+### 060cf2538f4702cd2709dcf59e45642ae6765470
+fix: grid cells are not buttons
+Enter on an effect cell flashed orange and reverted, and the cursor jumped.
+Driving the app with real trusted key events -- rather than JS-constructed
+ones, which never take DOM focus and so never reproduced it -- gave the
+mechanism:
+
+  keydown CAP  target=fx cell  active=fx cell
+    ★ cell restyled                      editor opens
+    ↳ stopPropagation(keydown)           RNW PressResponder swallows the key
+  keyup   CAP
+    ★ cell restyled                      onPress fires on KEYUP, reverting it
+
+Two failures, not one. Every cell was a Pressable, so every cell was an
+independently focusable, keyboard-activatable control: it took DOM focus on
+click, RNW's PressResponder called stopPropagation on Enter and Space, and
+then fired the cell's own onPress on keyup -- which ran setEditingEffect(false)
+and setCursor. Earlier attempts fixed the swallowed keydown and never saw the
+keyup, because the flash looked like the editor failing to open.
+
+A tracker grid is one keyboard widget with an internal cursor, not 256
+buttons. The cells are plain Views now and the container is the single
+focusable element. The cells' onPress handlers were pure duplication anyway --
+handlePointerDown already places the cursor from coordinates, including
+choosing note or effect via locateCell.
+
+Verified with real key events: Enter opens the editor, ArrowUp cycles the
+code, ArrowRight steps the value, Escape closes it leaving the cursor put, and
+clicking still lands on exactly one cell.
+Files: apps/zzfx-studio/src/components/PatternGrid.tsx
+Stats: 1 file changed, 11 insertions(+), 24 deletions(-)
+
 ### d7d96e52408afc7ec8fd43c844ee195aab883f20
 fix: Enter never reached the grid, and the cursor grew the row
 Enter did nothing on a cell you had just clicked, which the help modal
