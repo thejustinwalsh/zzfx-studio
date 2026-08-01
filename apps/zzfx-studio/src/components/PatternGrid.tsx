@@ -383,11 +383,23 @@ export function PatternGrid({
     if (Platform.OS !== 'web' || !focused) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Capture runs before the target, so a field being typed into has not had
+      // its say yet — skip it here rather than stealing its keys.
+      const target = e.target as HTMLElement | null;
+      if (target?.isContentEditable) return;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
       const handled = editingEffect ? handleEffectKey(e) : handleGridKey(e);
       if (handled) e.preventDefault();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    // Capture, not bubble. React Native Web's PressResponder handles Enter and
+    // Space on every Pressable and calls stopPropagation() unconditionally, so
+    // a bubble-phase listener never sees them — the cells are Pressables, which
+    // is why Enter did nothing on the cell you had just clicked. Capture runs
+    // on the way down, before the responder can swallow it.
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [focused, editingEffect]);
 
   // Clicking outside the grid releases keyboard capture.
@@ -951,16 +963,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  // The transparent border is load-bearing: cells are auto-height, so a border
+  // appearing only on the cursor added 2px and pushed the whole row taller as
+  // you arrowed around. Reserving it always means the cursor changes nothing
+  // but colour.
   noteField: {
     paddingHorizontal: 2,
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
   fxField: {
     paddingHorizontal: 2,
     marginLeft: 2,
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
   // Cell-scoped box, distinct from the row-wide playback highlight.
   cellCursor: {
-    borderWidth: 1,
     borderColor: colors.accentPrimary,
     backgroundColor: 'rgba(232, 116, 14, 0.12)',
   },
