@@ -2,7 +2,17 @@ import { VibeName, NoteName, ScaleName } from './types';
 import { CHROMATIC, SCALES, noteToZzfxm, baseOctaveFromFreq, FREQ_C3 } from './scales';
 
 // The bass channel is tuned to C3, so its note values are measured from there.
-const BASS_BASE_OCTAVE = baseOctaveFromFreq(FREQ_C3);
+/**
+ * Where the bass channel's notes are measured from.
+ *
+ * Newly generated bass instruments sit at C3, so this is the default. It is a
+ * default and not a constant because a song saved before that change still has
+ * a C4 bass instrument: encoding its notes against C3 would write value 12 for
+ * C3 while the retained instrument plays value 12 as C4, putting every
+ * regenerated bass note an octave out. The caller passes the octave derived
+ * from the instrument the song actually has.
+ */
+export const DEFAULT_BASS_BASE_OCTAVE = baseOctaveFromFreq(FREQ_C3);
 
 const ROWS = 32;
 const ROWS_PER_CHORD = 8; // 4 chords per 32-row pattern
@@ -81,7 +91,8 @@ function buildChord(
   rootName: NoteName,
   scale: ScaleName,
   bassOctave: number,
-  melodyOctave: number
+  melodyOctave: number,
+  bassBaseOctave: number = DEFAULT_BASS_BASE_OCTAVE
 ): ChordInfo {
   const rootIdx = CHROMATIC.indexOf(rootName);
   const intervals = SCALES[scale];
@@ -107,9 +118,9 @@ function buildChord(
   return {
     // Bass voicings are encoded against the bass channel's own tuning, so its
     // notes ride above value 12 instead of colliding with the rest sentinel.
-    root: noteToZzfxm(chordRootChromatic, bassOctave, BASS_BASE_OCTAVE),
-    third: noteToZzfxm(thirdChromatic, bassOctave + thirdOctaveAdj, BASS_BASE_OCTAVE),
-    fifth: noteToZzfxm(fifthChromatic, bassOctave + fifthOctaveAdj, BASS_BASE_OCTAVE),
+    root: noteToZzfxm(chordRootChromatic, bassOctave, bassBaseOctave),
+    third: noteToZzfxm(thirdChromatic, bassOctave + thirdOctaveAdj, bassBaseOctave),
+    fifth: noteToZzfxm(fifthChromatic, bassOctave + fifthOctaveAdj, bassBaseOctave),
     rootMelody: noteToZzfxm(chordRootChromatic, melodyOctave),
     thirdMelody: noteToZzfxm(thirdChromatic, melodyOctave + thirdOctaveAdj),
     fifthMelody: noteToZzfxm(fifthChromatic, melodyOctave + fifthOctaveAdj),
@@ -119,12 +130,14 @@ function buildChord(
 export function generateChordProgression(
   vibe: VibeName,
   key: NoteName,
-  scale: ScaleName
+  scale: ScaleName,
+  /** From the song's own bass instrument, so old C4 songs stay in tune. */
+  bassBaseOctave: number = DEFAULT_BASS_BASE_OCTAVE
 ): ChordProgression {
   const progression = pickWeighted(PROGRESSIONS[vibe]);
 
   const chords = progression.degrees.map(degree =>
-    buildChord(degree, key, scale, 3, 4)
+    buildChord(degree, key, scale, 3, 4, bassBaseOctave)
   );
 
   // Map each row to its chord (8 rows per chord)

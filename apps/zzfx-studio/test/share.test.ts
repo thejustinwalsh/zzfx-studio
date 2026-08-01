@@ -279,3 +279,55 @@ test('a song title cannot break out of the snippet attribute', () => {
   assert.ok(!html.includes('onload="alert(1)"'), 'title escaped out of the attribute');
   assert.ok(html.includes('&quot;'));
 });
+
+// --- decompression limits ----------------------------------------------------
+
+test('the inflate limit stops reading instead of measuring afterwards', async () => {
+  // The bug this guards: buffering the whole stream and checking its size only
+  // once it is in memory is no defence -- the allocation the limit exists to
+  // prevent has already happened. So assert the read STOPS, by counting how
+  // much the source was asked for. Measuring heap would not catch it either:
+  // ArrayBuffers are external memory and never show up in heapUsed.
+  const CHUNK = 64 * 1024;
+  let pulled = 0;
+
+  const source = () => ({
+    writable: new WritableStream(),
+    readable: new ReadableStream({
+      pull(c) {
+        pulled += CHUNK;
+        if (pulled > 64 * 1024 * 1024) { c.close(); return; }
+        c.enqueue(new Uint8Array(CHUNK));
+      },
+    }),
+  });
+
+  const limit = 1 << 20; // 1 MiB, the codec's MAX_INFLATED_BYTES
+  await assert.rejects(() => codec.pipeThrough(source(), new Uint8Array(0), limit));
+  assert.ok(
+    pulled <= limit + CHUNK * 2,
+    `read ${(pulled / 1048576).toFixed(1)}MiB before stopping at a ${(limit / 1048576)}MiB limit`
+  );
+
+  // And with no limit it reads everything, proving the bound is what stopped it.
+  pulled = 0;
+  const all = await codec.pipeThrough(source(), new Uint8Array(0));
+  assert.ok(all.length > limit * 8, 'unbounded read should have consumed far more');
+});
+
+test('a real deflate bomb is refused', async () => {
+  // 64 MiB of zeros, a few KB on the wire.
+  const huge = new Uint8Array(64 * 1024 * 1024);
+  const packed = new Uint8Array(await new Response(
+    new Response(huge).body!.pipeThrough(new CompressionStream('deflate-raw'))
+  ).arrayBuffer());
+  assert.ok(packed.length < 100_000, `bomb should be small on the wire, was ${packed.length}`);
+  assert.equal(await codec.songFromShareCode(Buffer.from(packed).toString('base64url')), null);
+});
+test('a payload just under the limit still decodes', async () => {
+  // The limit must reject the bomb without breaking ordinary songs.
+  const song = await codec.songFromShareCode(await codec.songToShareCode(
+    (await import('../src/engine/song')).generateSong({ vibe: 'boss', key: 'C', scale: 'dorian', bpm: 136, length: 'epic' })
+  ));
+  assert.ok(song && song.patternOrder.length > 0, 'a real song must still round-trip');
+});

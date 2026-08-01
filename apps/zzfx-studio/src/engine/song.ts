@@ -17,7 +17,8 @@ import { generateDrumPattern } from './drums';
 import { generateBassPattern } from './bass';
 import { generateMelodyPattern } from './melody';
 import { generateHarmonyPattern } from './harmony';
-import { generateChordProgression } from './chords';
+import { generateChordProgression, DEFAULT_BASS_BASE_OCTAVE } from './chords';
+import { baseOctaveFromFreq, FREQ_C3 } from './scales';
 import { generatePatternEffects, generateChannelEffects, applyEffect } from './effects';
 import { generateSongName } from './songNames';
 import { zzfxMChannels } from './zzfx';
@@ -43,14 +44,30 @@ const ROLE_BASS_MULTIPLIER: Record<SectionRole, number> = {
   climax: 1.2,
 };
 
+/** The bass channel; the one whose tuning the generator has to respect. */
+const BASS_CHANNEL = 2;
+
+/**
+ * Where a song's bass notes must be measured from.
+ *
+ * Read off the instrument the song actually has rather than assumed, because a
+ * song saved before the bass was retuned still carries a C4 instrument, and
+ * encoding fresh notes against C3 would put them an octave out the moment any
+ * bass is regenerated.
+ */
+function bassBaseOctaveOf(song: Song): number {
+  return baseOctaveFromFreq(song.instruments[BASS_CHANNEL]?.[2] ?? FREQ_C3);
+}
+
 function generatePatternForRole(
   config: SongConfig,
   role: SectionRole,
+  bassBaseOctave: number = DEFAULT_BASS_BASE_OCTAVE,
 ): { pattern: Pattern; effects: PatternEffects } {
   const vibeConfig = VIBE_CONFIG[config.vibe];
 
   // Generate chord progression — contrast/bridge/climax get fresh progressions
-  const progression = generateChordProgression(config.vibe, config.key, config.scale);
+  const progression = generateChordProgression(config.vibe, config.key, config.scale, bassBaseOctave);
 
   // Drums always play (backbone of every section)
   const { channelData: drumChannel, kickPattern } = generateDrumPattern(config.vibe);
@@ -186,7 +203,7 @@ export function regenerateAllPatterns(
 
   for (const label of song.patternOrder) {
     const role = song.patternRoles[label] ?? 'verse';
-    const { pattern, effects } = generatePatternForRole(newConfig, role);
+    const { pattern, effects } = generatePatternForRole(newConfig, role, bassBaseOctaveOf(song));
     patterns[label] = pattern;
     patternEffects[label] = effects;
   }
@@ -219,7 +236,7 @@ export function regenerateWithNewLength(
   for (let i = 0; i < template.roles.length; i++) {
     const label = PATTERN_LABELS[i];
     const role = template.roles[i];
-    const { pattern, effects } = generatePatternForRole(newConfig, role);
+    const { pattern, effects } = generatePatternForRole(newConfig, role, bassBaseOctaveOf(song));
     patterns[label] = pattern;
     patternRoles[label] = role;
     patternEffects[label] = effects;
@@ -242,7 +259,7 @@ export function regeneratePattern(
   patternLabel: PatternLabel
 ): { pattern: Pattern; effects: PatternEffects } {
   const role = song.patternRoles[patternLabel] ?? 'verse';
-  return generatePatternForRole(song.config, role);
+  return generatePatternForRole(song.config, role, bassBaseOctaveOf(song));
 }
 
 export function regenerateChannel(
@@ -255,7 +272,7 @@ export function regenerateChannel(
   const role = song.patternRoles[patternLabel] ?? 'verse';
 
   const progression = generateChordProgression(
-    song.config.vibe, song.config.key, song.config.scale
+    song.config.vibe, song.config.key, song.config.scale, bassBaseOctaveOf(song)
   );
 
   const melodyMult = ROLE_MELODY_MULTIPLIER[role];

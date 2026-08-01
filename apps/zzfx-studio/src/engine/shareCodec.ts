@@ -322,9 +322,10 @@ export function isShareSupported(): boolean {
   return typeof CompressionStream !== 'undefined' && typeof DecompressionStream !== 'undefined';
 }
 
-async function pipeThrough(
+export async function pipeThrough(
   stream: { writable: WritableStream; readable: ReadableStream },
-  bytes: Uint8Array
+  bytes: Uint8Array,
+  limit = Infinity
 ): Promise<Uint8Array> {
   const writer = stream.writable.getWriter();
   // A malformed payload makes these reject asynchronously. Swallow them here so
@@ -332,8 +333,31 @@ async function pipeThrough(
   // unhandled rejection — which is exactly what a corrupt share link produces.
   void writer.write(bytes as unknown as BufferSource).catch(() => {});
   void writer.close().catch(() => {});
-  const buf = await new Response(stream.readable).arrayBuffer();
-  return new Uint8Array(buf);
+
+  // Read incrementally and stop at the limit. Buffering the whole stream first
+  // and checking its size afterwards is no defence at all: a deflate bomb is
+  // small on the wire and enormous once expanded, so the allocation the limit
+  // exists to prevent has already happened by the time you can measure it.
+  const reader = stream.readable.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.length;
+      if (total > limit) throw new Error('inflated payload exceeds the limit');
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) { out.set(c, at); at += c.length; }
+  return out;
 }
 
 async function deflate(bytes: Uint8Array): Promise<Uint8Array | null> {
@@ -346,8 +370,7 @@ async function deflate(bytes: Uint8Array): Promise<Uint8Array | null> {
 
 async function inflate(bytes: Uint8Array): Promise<Uint8Array | null> {
   try {
-    const out = await pipeThrough(new DecompressionStream('deflate-raw'), bytes);
-    return out.length > MAX_INFLATED_BYTES ? null : out;
+    return await pipeThrough(new DecompressionStream('deflate-raw'), bytes, MAX_INFLATED_BYTES);
   } catch {
     return null;
   }

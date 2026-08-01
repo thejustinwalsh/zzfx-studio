@@ -170,12 +170,24 @@ export function PatternGrid({
 
   const [cursor, setCursor] = useState<Cursor>({ row: 0, channel: 0, field: 'note' });
   const [focused, setFocused] = useState(false);
-  const [octave, setOctave] = useState(4);
+  const [rawOctave, setOctave] = useState(4);
   const [dragEnabled, setDragEnabled] = useState(prefersPointer);
-  // Which field the cursor is *inside*, as opposed to merely sitting on. Null
-  // is the normal navigating state. A single value rather than a flag per field
-  // so the two edit modes cannot both be open.
-  const [editing, setEditing] = useState<CursorField | null>(null);
+  /**
+   * Which field the cursor is *inside*, as opposed to merely sitting on, and
+   * the pattern it was opened in. One value rather than a flag per field, so
+   * the two edit modes cannot both be open.
+   *
+   * The pattern label rides along so switching patterns closes the editor by
+   * derivation. Doing that in an effect meant setting state synchronously
+   * during one, which cascades a render for something that is simply a fact
+   * about the current props.
+   */
+  const [editingIn, setEditingIn] = useState<{ label: PatternLabel; field: CursorField } | null>(null);
+  const editing = editingIn?.label === patternLabel ? editingIn.field : null;
+  const setEditing = useCallback(
+    (field: CursorField | null) => setEditingIn(field ? { label: patternLabel, field } : null),
+    [patternLabel]
+  );
   const [rejectFlash, setRejectFlash] = useState(false);
 
   const containerRef = useRef<View | null>(null);
@@ -183,20 +195,20 @@ export function PatternGrid({
   const geom = useRef({ width: 0, rowHeight: 0, headerHeight: 0, viewportHeight: 0, contentHeight: 0, noteFieldWidth: 0 });
   const lastAudition = useRef(0);
 
-  // Pattern changed under us — park the cursor somewhere valid.
-  useEffect(() => {
-    setEditing(null);
-  }, [patternLabel]);
-
   // The cursor's channel decides which tuning notes are entered against.
   const cursorBase = baseOctaves[cursor.channel] ?? DEFAULT_BASE_OCTAVE;
 
-  // Channels are tuned differently, so the addressable octaves differ too.
-  // Clamp the register when the cursor crosses into a channel that cannot
-  // reach where it is currently pointed.
-  useEffect(() => {
-    setOctave((o) => clampOctave(o, cursorBase));
-  }, [cursorBase]);
+  /**
+   * The register actually in use.
+   *
+   * Channels are tuned differently, so the addressable octaves differ. This was
+   * an effect that clamped the stored value, which set state synchronously
+   * during an effect -- a cascading render the compiler rejects -- and worse,
+   * it destroyed the chosen octave: crossing into the bass and back left you
+   * clamped rather than where you started. Deriving it leaves the choice
+   * intact and simply respects the channel you are pointed at.
+   */
+  const octave = clampOctave(rawOctave, cursorBase);
 
   const noteAt = useCallback(
     (channel: number, row: number): number => pattern[channel]?.[row + 2] ?? 0,
@@ -237,6 +249,10 @@ export function PatternGrid({
 
   // ---- Cursor scroll-follow -------------------------------------------------
 
+  // Declared before revealRow reads it. Used after its declaration at runtime
+  // either way, but the compiler reads the source in order and cannot know it.
+  const scrollOffset = useRef(0);
+
   const revealRow = useCallback((row: number) => {
     const { rowHeight, viewportHeight, headerHeight } = geom.current;
     if (!rowHeight || !viewportHeight) return;
@@ -250,8 +266,6 @@ export function PatternGrid({
       scrollRef.current?.scrollTo({ y: bottom - (viewportHeight - headerHeight), animated: false });
     }
   }, []);
-
-  const scrollOffset = useRef(0);
 
   const moveCursor = useCallback(
     (next: Cursor) => {
@@ -486,7 +500,12 @@ export function PatternGrid({
     scale,
     setCursorFn: setCursor,
   });
-  dragCtx.current = { enabled: dragEnabled, noteAt, writeNote, songKey, scale, setCursorFn: setCursor };
+  // Published after commit, never during render. Writing a ref while rendering
+  // can publish closures from a render React then throws away, so a later drag
+  // would read and edit the pattern through an uncommitted version of it.
+  useEffect(() => {
+    dragCtx.current = { enabled: dragEnabled, noteAt, writeNote, songKey, scale, setCursorFn: setCursor };
+  }, [dragEnabled, noteAt, writeNote, songKey, scale]);
 
   const drag = useRef<{
     row: number;

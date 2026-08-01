@@ -624,6 +624,9 @@ function Studio() {
   // A drag fires an edit every 12px, so collapse the burst into one render.
   const editTimersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
+  /** Latest render ticket per channel; an older render's result is discarded. */
+  const renderGenRef = useRef<Map<number, number>>(new Map());
+
   const scheduleChannelRerender = useCallback((channelIndex: number) => {
     const timers = editTimersRef.current;
     const existing = timers.get(channelIndex);
@@ -634,7 +637,16 @@ function Studio() {
       const currentSong = useSongStore.getState().song;
       if (!currentSong) return;
 
+      // Debouncing only delays the *start* of a render. Two can still be in
+      // flight, and they do not finish in order: if an earlier one lands last
+      // it overwrites the channel with audio from before the newer edit, so
+      // the grid shows one thing and playback plays another. Each render
+      // takes a ticket and a stale one drops its result.
+      const gen = (renderGenRef.current.get(channelIndex) ?? 0) + 1;
+      renderGenRef.current.set(channelIndex, gen);
+
       renderEngineRef.current.renderSongBuffers(currentSong).then(buffers => {
+        if (renderGenRef.current.get(channelIndex) !== gen) return;
         if (buffers.length === 0 || buffers[0][0].length === 0) return;
         channelBuffersRef.current[channelIndex] = buffers[channelIndex];
         // Only hot-swap while playing; otherwise the buffers are just staged
