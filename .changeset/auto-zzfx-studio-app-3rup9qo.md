@@ -5,6 +5,36 @@
 > Branch: claude/tracker-note-entry-def3a5
 > PR: https://github.com/thejustinwalsh/zzfx-studio/pull/7
 
+### 6fecfead61a65cd1fac0899ee16cc9b43defaac8
+fix: four defects from adversarial review
+Stale audio: debouncing only delays the start of a render, so two can be in
+flight and they do not finish in order. An earlier render landing last
+overwrote the channel with audio from before the newer edit -- the grid showed
+one thing while playback played another. Each render now takes a ticket and a
+stale result is dropped.
+
+Bass an octave out on older songs: the generator encoded bass against a
+constant C3, but a song saved before that retuning still carries a C4 bass
+instrument, so regenerating any bass wrote value 12 meaning C3 into an
+instrument that plays it as C4. The base octave is now read off the instrument
+the song actually has, threaded through every regenerate path.
+
+Deflate bomb: the 1 MiB cap was applied after buffering the whole stream, which
+is no defence -- the allocation it exists to prevent had already happened. The
+read is bounded as it streams. The test asserts the read stops early rather
+than measuring memory, because ArrayBuffers are external and never appear in
+heapUsed; it fails when the bound is removed.
+
+Compiler rules in the grid: the octave clamp set state synchronously in an
+effect, and it destroyed the chosen register -- crossing into the bass and back
+left you clamped rather than where you started. It derives now. The edit mode
+reset did the same and is likewise derived, keyed to the pattern it opened in.
+The drag context was published by writing a ref during render, which can hand
+the pointer handler closures from a render React discarded; it moves to an
+effect. PatternGrid is now free of compiler errors.
+Files: apps/zzfx-studio/App.tsx, apps/zzfx-studio/src/components/PatternGrid.tsx, apps/zzfx-studio/src/engine/chords.ts, apps/zzfx-studio/src/engine/shareCodec.ts, apps/zzfx-studio/src/engine/song.ts, apps/zzfx-studio/test/share.test.ts
+Stats: 6 files changed, 174 insertions(+), 38 deletions(-)
+
 ### 37e06c57b73c7b18735f060083593f3746aec670
 feat: notes get an editor too, and kill the grid-wide focus ring
 Enter on a note did nothing -- only effects had an editor -- so the keyboard
