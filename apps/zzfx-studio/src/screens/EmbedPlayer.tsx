@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { Linking, PanResponder, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { AnimatedPressable } from '../components/AnimatedPressable';
 import { Oscilloscope } from '../components/Oscilloscope';
@@ -63,13 +63,19 @@ export function EmbedPlayer() {
   const [scopeBox, setScopeBox] = useState(0);
 
   const audioRef = useRef<AudioGraph | null>(null);
+  // State, not reached through the ref while rendering; created once with the graph.
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const engineRef = useRef(createRenderEngine());
   const buffersRef = useRef<Awaited<ReturnType<typeof engineRef.current.renderSongBuffers>>>([]);
-  const rafRef = useRef(0);
 
   useEffect(() => {
     const code = typeof window === 'undefined' ? null : shareCodeFromUrl(window.location.href);
-    if (!code) { setPhase('session'); return; }
+    if (!code) {
+      // Deferred rather than set inline: a synchronous setState in an effect
+      // cascades a render, and the compiler stops optimising the component.
+      queueMicrotask(() => setPhase('session'));
+      return;
+    }
 
     let cancelled = false;
     loadShareCodec()
@@ -101,15 +107,23 @@ export function EmbedPlayer() {
     audioRef.current?.stop();
     setIsPlaying(false);
     setPosition(0);
-    cancelAnimationFrame(rafRef.current);
   }, []);
 
-  const tick = useCallback(() => {
+  /** One frame. Returns whether another is wanted; the loop below schedules it. */
+  const tick = useEffectEvent(() => {
     const ag = audioRef.current;
-    if (!ag?.isPlaying) return;
+    if (!ag?.isPlaying) return false;
     setPosition(ag.getPosition());
-    rafRef.current = requestAnimationFrame(tick);
-  }, []);
+    return true;
+  });
+
+  useEffect(() => {
+    if (!isPlaying) return;
+    let raf = 0;
+    const loop = () => { if (tick()) raf = requestAnimationFrame(loop); };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying]);
 
   // The frame can be any size an embedder picks, so the layout is driven by the
   // room available rather than by fixed breakpoints alone.
@@ -141,8 +155,8 @@ export function EmbedPlayer() {
     if (!song || !playback) return null;
     const pattern = song.patterns[playback.label];
     if (!pattern) return null;
-    return buildOscColorTable(song, pattern, barCount, audioRef.current?.getAnalyser());
-  }, [song, playback?.label, barCount]);
+    return buildOscColorTable(song, pattern, barCount, analyser);
+  }, [song, playback?.label, barCount, analyser]);
 
   const play = useCallback(async () => {
     if (!song) return;
@@ -151,6 +165,7 @@ export function EmbedPlayer() {
     unlockAudio();
     if (!audioRef.current) {
       audioRef.current = new AudioGraph();
+      setAnalyser(audioRef.current.getAnalyser());
       audioRef.current.setMasterVolume(volume);
     }
 
@@ -165,8 +180,7 @@ export function EmbedPlayer() {
     setDuration(seconds);
     audioRef.current.play(buffers, seconds, song.config.bpm);
     setIsPlaying(true);
-    rafRef.current = requestAnimationFrame(tick);
-  }, [song, isPlaying, stop, tick, volume]);
+  }, [song, isPlaying, stop, volume]);
 
   const changeVolume = useCallback((next: number) => {
     const clamped = Math.max(0, Math.min(1, next));
@@ -176,7 +190,6 @@ export function EmbedPlayer() {
   }, []);
 
   useEffect(() => () => {
-    cancelAnimationFrame(rafRef.current);
     audioRef.current?.stop();
     engineRef.current.dispose();
   }, []);
@@ -282,7 +295,7 @@ export function EmbedPlayer() {
         onLayout={(e) => setScopeBox(Math.round(e.nativeEvent.layout.height))}
       >
         <Oscilloscope
-          analyser={audioRef.current?.getAnalyser() ?? null}
+          analyser={analyser}
           isPlaying={isPlaying}
           height={scopeHeight}
           barCount={barCount}
@@ -323,11 +336,11 @@ function VolumeSlider({
   onChange: (v: number) => void;
   width: number;
 }) {
-  const trackWidth = useRef(width);
+  const [trackWidth, setTrackWidth] = useState(width);
 
   const setFromX = useCallback((x: number) => {
-    onChange(x / Math.max(1, trackWidth.current));
-  }, [onChange]);
+    onChange(x / Math.max(1, trackWidth));
+  }, [onChange, trackWidth]);
 
   const responder = useMemo(
     () =>
@@ -345,7 +358,7 @@ function VolumeSlider({
       <Text style={styles.volumeLabel}>VOL</Text>
       <View
         style={[styles.volumeTrack, { width }]}
-        onLayout={(e) => { trackWidth.current = e.nativeEvent.layout.width; }}
+        onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
         accessibilityRole="adjustable"
         accessibilityLabel={`Volume ${Math.round(value * 100)} percent`}
         accessibilityValue={{ min: 0, max: 100, now: Math.round(value * 100) }}

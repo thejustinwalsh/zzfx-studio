@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, PanResponder, LayoutChangeEvent } from 'react-native';
 import { colors } from '../theme/colors';
 import { fonts, fontSize } from '../theme/typography';
@@ -16,7 +16,7 @@ interface SliderProps {
 }
 
 export function Slider({ label, value, min, max, step = 1, onValueChange, formatValue, compact }: SliderProps) {
-  const trackWidth = useRef(0);
+  const [trackWidth, setTrackWidth] = useState(0);
   const fraction = (value - min) / (max - min);
 
   const clampToStep = useCallback((raw: number) => {
@@ -24,25 +24,31 @@ export function Slider({ label, value, min, max, step = 1, onValueChange, format
     return Math.round(clamped / step) * step;
   }, [min, max, step]);
 
-  const panResponder = useRef(
-    PanResponder.create({
+  /**
+   * The responder closes over the props it needs and is rebuilt when they
+   * change.
+   *
+   * It used to be built once inside a ref, which captured the first
+   * onValueChange, min and max and kept calling those forever — a slider whose
+   * handler or range changed silently went on reporting the old one. Width is
+   * state rather than a ref for the same reason it is now correct: nothing here
+   * reads a ref while rendering, so the compiler can optimise the component.
+   * Width only changes on layout, so rebuilding costs nothing.
+   */
+  const panResponder = useMemo(() => {
+    const commit = (x: number) => {
+      onValueChange(clampToStep(min + (x / (trackWidth || 1)) * (max - min)));
+    };
+    return PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (evt) => {
-        const x = evt.nativeEvent.locationX;
-        const frac = x / trackWidth.current;
-        onValueChange(clampToStep(min + frac * (max - min)));
-      },
-      onPanResponderMove: (evt) => {
-        const x = evt.nativeEvent.locationX;
-        const frac = x / trackWidth.current;
-        onValueChange(clampToStep(min + frac * (max - min)));
-      },
-    })
-  ).current;
+      onPanResponderGrant: (evt) => commit(evt.nativeEvent.locationX),
+      onPanResponderMove: (evt) => commit(evt.nativeEvent.locationX),
+    });
+  }, [onValueChange, clampToStep, min, max, trackWidth]);
 
   const onLayout = useCallback((e: LayoutChangeEvent) => {
-    trackWidth.current = e.nativeEvent.layout.width;
+    setTrackWidth(e.nativeEvent.layout.width);
   }, []);
 
   const displayValue = formatValue ? formatValue(value) : String(value);

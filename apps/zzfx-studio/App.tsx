@@ -217,7 +217,10 @@ function Studio() {
   const [flashChannels, setFlashChannels] = useState<Set<number>>(new Set());
   const [renderingChannels, setRenderingChannels] = useState<Set<number>>(new Set());
   const [showExport, setShowExport] = useState(false);
-  const exportPromiseRef = useRef<Promise<[Float32Array, Float32Array][]> | null>(null);
+  // State, not a ref: it is read while rendering the export modal, and a ref
+  // read there makes the compiler skip this component.
+  const [exportPromise, setExportPromise] =
+    useState<Promise<[Float32Array, Float32Array][]> | null>(null);
   const [showLoad, setShowLoad] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
 
@@ -252,17 +255,27 @@ function Studio() {
   const renderEngineRef = useRef(createRenderEngine());
   const channelBuffersRef = useRef<([number[] | Float32Array, number[] | Float32Array])[]>([]);
   const renderSeqRef = useRef(0); // Monotonic counter — only used for BPM debounce
-  const rafRef = useRef<number>(0);
   const bpmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const volTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gridScrollRef = useRef<ScrollView>(null);
   const gridRowHeight = useRef(0);
   const gridHeaderHeight = useRef(0);
 
+  /**
+   * The analyser, as state rather than reached for through the graph ref.
+   *
+   * The oscilloscope and the colour table both need it while rendering, and a
+   * ref read during render is invisible to the compiler: it bails out of the
+   * whole component, so nothing here gets memoised at all. The node is created
+   * once with the graph and never replaced, so state models it exactly.
+   */
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
+
   // Lazy-init AudioGraph
   const getAudioGraph = useCallback(() => {
     if (!audioGraphRef.current) {
       audioGraphRef.current = new AudioGraph();
+      setAnalyser(audioGraphRef.current.getAnalyser());
     }
     return audioGraphRef.current;
   }, []);
@@ -335,6 +348,11 @@ function Studio() {
     for (const sv of adsrProgressValues) sv.set(null);
   }, [adsrProgressValues]);
 
+  // Declared before stopPlayback reads them. The compiler follows source order
+  // and cannot see that these only run after mount.
+  const prevRowRef = useRef<number | null>(null);
+  const prevPatIdxRef = useRef<number | null>(null);
+
   const stopPlayback = useCallback(() => {
     audioGraphRef.current?.stop();
     setIsPlaying(false);
@@ -342,15 +360,21 @@ function Studio() {
     prevRowRef.current = null;
     prevPatIdxRef.current = null;
     clearAdsrProgress();
-    cancelAnimationFrame(rafRef.current);
   }, [clearAdsrProgress]);
 
-  // Playback position tracking via RAF using AudioGraph's audio clock
-  // Track previous values to avoid unnecessary React re-renders
-  const prevRowRef = useRef<number | null>(null);
-  const prevPatIdxRef = useRef<number | null>(null);
+  // Playback position tracking via RAF using AudioGraph's audio clock.
 
-  const updatePlaybackPosition = useCallback(() => {
+  /**
+   * One frame of playback position.
+   *
+   * An effect event, not a callback. It rescheduled itself, which is a
+   * self-reference the compiler rejects outright ("cannot access variable
+   * before it is declared") and which takes the whole component out of
+   * compilation with it. As an effect event the body always sees current state
+   * without being a dependency of anything, and the loop that drives it lives
+   * in the effect below.
+   */
+  const updatePlaybackPosition = useEffectEvent(() => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong || !audioGraphRef.current) return;
     const ag = audioGraphRef.current;
@@ -413,8 +437,25 @@ function Studio() {
       }
     }
 
-    rafRef.current = requestAnimationFrame(updatePlaybackPosition);
-  }, [adsrProgressValues]);
+  });
+
+  /**
+   * The frame loop.
+   *
+   * Owned by an effect keyed on isPlaying, so starting and stopping playback no
+   * longer has to remember to schedule or cancel it by hand, and an unmount
+   * mid-playback cannot leave a frame callback running.
+   */
+  useEffect(() => {
+    if (!isPlaying) return;
+    let raf = 0;
+    const loop = () => {
+      updatePlaybackPosition();
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying]);
 
   // Generation flash effect
   const flashChannel = useCallback((channels: number[]) => {
@@ -527,7 +568,6 @@ function Studio() {
 
     if (ag.isPlaying) {
       ag.stop();
-      cancelAnimationFrame(rafRef.current);
     }
 
     // Use pre-rendered buffers if available, otherwise render now
@@ -546,9 +586,9 @@ function Studio() {
       ag.setChannelGain(ch, getEffectiveGain(ch));
     }
 
+    // The frame loop starts itself: its effect is keyed on isPlaying.
     setIsPlaying(true);
-    rafRef.current = requestAnimationFrame(updatePlaybackPosition);
-  }, [updatePlaybackPosition, getEffectiveGain, getAudioGraph]);
+  }, [getEffectiveGain, getAudioGraph]);
 
   const handleStop = useCallback(() => {
     stopPlayback();
@@ -971,7 +1011,6 @@ function Studio() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      cancelAnimationFrame(rafRef.current);
       audioGraphRef.current?.stop();
       if (volTimerRef.current) clearTimeout(volTimerRef.current);
       if (nameTimerRef.current) clearTimeout(nameTimerRef.current);
@@ -1008,9 +1047,9 @@ function Studio() {
       song,
       currentPattern,
       BAR_COUNT,
-      audioGraphRef.current?.getAnalyser()
+      analyser
     );
-  }, [song, currentPattern]);
+  }, [song, currentPattern, analyser]);
 
   if (!hydrated) {
     return (
@@ -1110,7 +1149,7 @@ function Studio() {
               <AnimatedPressable
                 onPress={() => {
                   if (song && renderEngineRef.current) {
-                    exportPromiseRef.current = renderEngineRef.current.renderSongBuffers(song);
+                    setExportPromise(renderEngineRef.current.renderSongBuffers(song));
                   }
                   // Fetch the share codec while the export screen is being
                   // read, so the first press of share does not wait on it.
@@ -1166,7 +1205,7 @@ function Studio() {
       {/* Oscilloscope */}
       {song && (
         <Oscilloscope
-          analyser={audioGraphRef.current?.getAnalyser() ?? null}
+          analyser={analyser}
           isPlaying={isPlaying}
           height={48}
           barCount={BAR_COUNT}
@@ -1275,8 +1314,8 @@ function Studio() {
         <ExportModal
           visible={showExport}
           song={song}
-          onClose={() => { setShowExport(false); exportPromiseRef.current = null; }}
-          renderPromise={exportPromiseRef.current}
+          onClose={() => { setShowExport(false); setExportPromise(null); }}
+          renderPromise={exportPromise}
         />
       )}
 
