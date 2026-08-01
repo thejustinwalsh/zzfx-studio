@@ -389,33 +389,35 @@ export function drumVoiceInstrument(base: ZzFXSound, voice: DrumVoice): ZzFXSoun
   // as undefined rather than 0. Pad to the full parameter count first.
   const p = [...base];
   while (p.length < 20) p.push(0);
+
+  const scale = (i: number, by: number, cap = Infinity) =>
+    { p[i] = Math.min(cap, (base[i] ?? 0) * by); };
+
   switch (voice) {
     case 'KICK':
-      p[2] = 130;     // low body
-      p[6] = 0;       // sine, not noise — a kick is pitched
-      p[8] = -14;     // hard downward sweep is what makes it a thump
-      p[13] = 0.03;   // barely any grit
-      p[4] = 0.03; p[5] = 0.12; p[18] = 0.08;
+      // Pitch is the one parameter that must be handled carefully here. Shape 4
+      // is sin(t**3): its broadband character comes from phase accelerating
+      // fast, so dropping the frequency far enough turns the same shape into an
+      // audible descending tone -- a bubble, not a drum. Measured, it stays
+      // broadband down to about 0.65x and goes tonal below it, and steepening
+      // the slide tips it over on its own. So: lower, but only so far, and the
+      // archetype's own slide is left alone.
+      scale(2, 0.65);
+      scale(5, 1.9);     // the long tail is what actually says "kick"
+      scale(18, 1.9);
       break;
     case 'SNARE':
-      // A tonal shape driven hard by the noise parameter, rather than shape 4.
-      // Shape 4 is broadband whatever its frequency, so a shape-4 snare and a
-      // shape-4 hat measure identically; keeping a pitched core is what puts
-      // the snare below the hat instead of on top of it.
-      p[2] = 320;
-      p[6] = 2;       // saw body
-      p[7] = 0.6;
-      p[8] = -3;
-      p[13] = 0.55;   // rattle over the body
-      p[4] = 0.02; p[5] = 0.10; p[18] = 0.05;
+      // The reference point: the archetype as written, with a touch more
+      // rattle. Moving it would only push the other two around.
+      scale(13, 1.25, 1);
       break;
     case 'HAT':
-      p[2] = 1200;
-      p[6] = 4;
-      p[8] = 0;       // hats do not pitch-drop
-      p[13] = 0.9;
-      p[4] = 0.004; p[5] = 0.025; p[18] = 0.012;
-      p[0] = (base[0] ?? 0.8) * 0.55;  // sits back in the mix
+      scale(2, 2.6);     // well above
+      scale(4, 0.4);
+      scale(5, 0.35);    // and gone almost immediately
+      scale(18, 0.35);
+      scale(13, 1.5, 1);
+      scale(0, 0.6);     // sits back in the mix
       break;
   }
   return p;
