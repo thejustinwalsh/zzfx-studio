@@ -68,14 +68,52 @@ test('each quadrant reports its own channel', () => {
   }
 });
 
-test('DRUMS addresses the drum channel wherever you hit it', () => {
-  for (const [row, col] of [[1, 1], [8, 1], [4, 5]]) {
-    const pad = lp.padIndex(row, col);
-    const e = dev.decodeLaunchpad([0x90, pad, 64], DRUMS);
-    if (lp.DRUMS_LAYOUT[pad] < 0) continue;
-    assert.equal(e.channel, 3, `pad ${row},${col} left the drum channel`);
-    assert.equal(e.note, lp.DRUMS_LAYOUT[pad]);
+test('a drum pad carries its effect, not just its note', () => {
+  // The whole point of the kit: the pad plays a sound the generator writes, and
+  // recording it stores the note and the effect the grid already understands.
+  const raw = dev.decodeLaunchpad([0x90, lp.padIndex(1, 1), 64], DRUMS);
+  assert.equal(raw.channel, 3);
+  assert.equal(raw.note, lp.DRUM_VARIANTS[0].note);
+  assert.equal(raw.effect, null, 'column one is the raw voice');
+
+  const crunch = dev.decodeLaunchpad([0x90, lp.padIndex(1, 4), 64], DRUMS);
+  assert.deepEqual(crunch.effect, { code: 'BC', value: 0x18 });
+  assert.equal(crunch.note, raw.note, 'same voice, different treatment');
+});
+
+test('the drum quadrant in KEYS plays the kit, not scale degrees', () => {
+  // Bottom-right quadrant. It used to be handed scale notes, which produced
+  // sixteen drums pitched by a scale that has nothing to do with percussion.
+  const pad = lp.padIndex(1, 5);
+  const e = dev.decodeLaunchpad([0x90, pad, 64], KEYS);
+  assert.equal(e.channel, 3, 'the drum quadrant should address drums');
+  assert.equal(e.note, lp.DRUM_VARIANTS[0].note);
+  assert.equal(KEYS.keys[pad], -1, 'no melodic note should be mapped there');
+});
+
+test('the other three quadrants stay melodic in KEYS', () => {
+  for (const [row, col, ch] of [[8, 1, 0], [8, 8, 1], [1, 1, 2]] as const) {
+    const e = dev.decodeLaunchpad([0x90, lp.padIndex(row, col), 64], KEYS);
+    assert.equal(e.channel, ch);
+    assert.equal(e.effect, null, 'melodic pads carry no baked effect');
   }
+});
+
+test('the scene column arms in KEYS and DRUMS, and launches in SESSION', () => {
+  for (const t of [KEYS, DRUMS]) {
+    const e = dev.decodeLaunchpad([0xb0, lp.ARM_CC[2], 127], t);
+    assert.equal(e.kind, 'arm', `${t.layout} should arm`);
+    assert.equal(e.channel, 2, 'third button is BASS');
+  }
+  const s = dev.decodeLaunchpad([0xb0, lp.ARM_CC[0], 127], SESSION);
+  assert.equal(s.kind, 'scene', 'SESSION keeps the hardware scene-launch meaning');
+});
+
+test('arm buttons light in their channel colour, brighter when armed', () => {
+  const s = new lp.LedSurface();
+  dev.renderLaunchpad(s, baseState({ layout: 'KEYS', armed: [true, false, false, false] }));
+  assert.equal(s.get(lp.ARM_CC[0]), lp.scaleRgb(dev.CHANNEL_CELLS[0], dev.LEVEL_ACTIVE));
+  assert.equal(s.get(lp.ARM_CC[1]), lp.scaleRgb(dev.CHANNEL_CELLS[1], dev.LEVEL_IDLE));
 });
 
 test('an unmapped pad is silent rather than playing something arbitrary', () => {
@@ -338,4 +376,29 @@ test('an input without a matching output is not a usable device', () => {
     outputs: new Map(),
   };
   assert.equal(dev.findLaunchpadPorts(access), null);
+});
+
+test('the kit lights in both layouts, and only where it exists', () => {
+  for (const layout of ['DRUMS', 'KEYS']) {
+    const s = new lp.LedSurface();
+    dev.renderLaunchpad(s, baseState({ layout, armed: [false, false, false, true] }));
+    const table = layout === 'DRUMS' ? lp.DRUMS_LAYOUT : lp.KEYS_DRUM_LAYOUT;
+    let lit = 0;
+    for (let i = 0; i < 100; i++) {
+      if (!lp.isGridPad(i) || table[i] < 0) continue;
+      assert.notEqual(s.get(i), lp.OFF, `${layout}: kit pad ${i} was dark`);
+      lit++;
+    }
+    assert.equal(lit, 12, `${layout} should light twelve kit pads`);
+  }
+});
+
+test('DRUMS leaves everything outside the kit dark', () => {
+  const s = new lp.LedSurface();
+  dev.renderLaunchpad(s, baseState({ layout: 'DRUMS' }));
+  for (let row = 4; row <= 8; row++) {
+    for (let col = 1; col <= 8; col++) {
+      assert.equal(s.get(lp.padIndex(row, col)), lp.OFF, `pad ${row},${col} lit with nothing behind it`);
+    }
+  }
 });

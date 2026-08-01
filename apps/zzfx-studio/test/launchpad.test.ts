@@ -2,12 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import * as lpMod from '../src/engine/launchpad';
-import * as noteEntryMod from '../src/engine/noteEntry';
 
 const lp = (lpMod as any).default ?? lpMod;
-const noteEntry = (noteEntryMod as any).default ?? noteEntryMod;
-
-const GRID_ROWS = 8;
 
 const hex = (bytes: Uint8Array | number[]) =>
   [...bytes].map((b) => b.toString(16).padStart(2, '0')).join(' ');
@@ -305,8 +301,9 @@ test('the quadrants hold the same note values, so each plays in its own register
     for (let col = 1; col <= 4; col++) {
       const bass = table[lp.padIndex(row, col)];
       assert.equal(table[lp.padIndex(row + 4, col)], bass, 'LEAD quadrant differs');
-      assert.equal(table[lp.padIndex(row, col + 4)], bass, 'DRUM quadrant differs');
       assert.equal(table[lp.padIndex(row + 4, col + 4)], bass, 'HARM quadrant differs');
+      // The drum quadrant is a kit, not a scale — it holds no melodic notes.
+      assert.equal(table[lp.padIndex(row, col + 4)], -1, 'the drum quadrant was given scale notes');
     }
   }
 });
@@ -340,46 +337,65 @@ test('the key changes what the pads play', () => {
   assert.equal(d[lp.padIndex(1, 3)], 6, 'D major takes F sharp');
 });
 
-test('DRUMS lays out every distinct drum sound exactly once', () => {
-  const table = lp.DRUMS_LAYOUT;
-  const seen = new Map<number, number>();
-  for (let i = 0; i < 100; i++) {
-    const n = table[i];
-    if (n < 0) continue;
-    assert.ok(lp.isGridPad(i), `a drum landed on CC ${i}`);
-    assert.equal(seen.has(n), false, `note ${n} appears twice`);
-    seen.set(n, i);
-  }
-  // Every note in every voice's range is reachable.
-  const total = noteEntry.DRUM_RANGES.reduce(
-    (sum: number, r: any) => sum + (r.max - r.min + 1),
-    0
+test('the drum kit is the sounds the generator actually writes', () => {
+  // Not one pad per note value: that gave 6 kicks, 16 snares and 26 hi-hats
+  // separated only by pitch, none of which matched a generated song.
+  assert.equal(lp.DRUM_VARIANTS.length, 12, 'three voices times four variants');
+  assert.deepEqual(
+    lp.DRUM_VARIANTS.map((v: any) => v.label),
+    [
+      'KCK', 'KCK PD60', 'KCK PDA0', 'KCK BC18',
+      'SNR', 'SNR PD60', 'SNR PDA0', 'SNR BC18',
+      'HAT', 'HAT PD60', 'HAT PDA0', 'HAT BC18',
+    ]
   );
-  assert.equal(seen.size, total, 'some drum sound has no pad');
-  for (const range of noteEntry.DRUM_RANGES) {
-    for (let n = range.min; n <= range.max; n++) {
-      assert.ok(seen.has(n), `${range.name} note ${n} is unreachable`);
-    }
+});
+
+test('every pad effect comes from the generator\'s own drum pool', () => {
+  // CHANNEL_FX_POOLS[3] is ['PD','BC'] — punch kicks, crunch snares. A pad that
+  // offered anything else would play a sound no generated song contains.
+  for (const v of lp.DRUM_VARIANTS) {
+    if (!v.effect) continue;
+    assert.ok(['PD', 'BC'].includes(v.effect.code), `${v.label} uses ${v.effect.code}`);
+    assert.ok(v.effect.value >= 0 && v.effect.value <= 0xff, `${v.label} value out of range`);
   }
 });
 
-test('each drum voice starts on a fresh row, so the zones read by position', () => {
-  const table = lp.DRUMS_LAYOUT;
-  const rowOfFirst = (min: number) => {
-    for (let i = 0; i < 100; i++) if (table[i] === min) return lp.padRow(i);
-    return -1;
-  };
-  const rows: number[] = noteEntry.DRUM_RANGES.map((r: any) => rowOfFirst(r.min));
-  assert.deepEqual(rows, [1, 2, 4], 'KCK / SNR / HAT should begin on rows 1, 2 and 4');
-  // Each voice therefore occupies a contiguous band with no other voice in it.
-  for (const [i, range] of noteEntry.DRUM_RANGES.entries()) {
-    const used: number[] = [];
-    for (let j = 0; j < 100; j++) {
-      if (table[j] >= range.min && table[j] <= range.max) used.push(lp.padRow(j));
-    }
-    const nextRow: number = rows[i + 1] ?? GRID_ROWS + 1;
-    assert.ok(Math.max(...used) < nextRow, `${range.name} overlaps the next voice`);
+test('each voice offers its raw form first, then its effects', () => {
+  for (let v = 0; v < 3; v++) {
+    const row = lp.DRUM_VARIANTS.slice(v * 4, v * 4 + 4);
+    assert.equal(row[0].effect, null, `${row[0].label} should be the raw voice`);
+    assert.ok(row.slice(1).every((x: any) => x.effect), 'the rest should carry effects');
+    assert.ok(row.every((x: any) => x.note === row[0].note), 'a row is one voice');
   }
+});
+
+test('the kit sits bottom-left in DRUMS and in the drum quadrant in KEYS', () => {
+  // Same kit in both, so there is one thing to learn rather than two.
+  for (let v = 0; v < 3; v++) {
+    for (let c = 0; c < 4; c++) {
+      const idx = v * 4 + c;
+      assert.equal(lp.DRUMS_LAYOUT[lp.padIndex(1 + v, 1 + c)], idx, 'DRUMS placement');
+      assert.equal(lp.KEYS_DRUM_LAYOUT[lp.padIndex(1 + v, 5 + c)], idx, 'KEYS quadrant placement');
+    }
+  }
+  // Rows above the kit are dark rather than holding something arbitrary.
+  for (let row = 4; row <= 8; row++) {
+    assert.equal(lp.DRUMS_LAYOUT[lp.padIndex(row, 1)], -1, `row ${row} should be dark`);
+  }
+});
+
+test('voices run upward, so higher on the grid is higher in pitch', () => {
+  const noteAt = (row: number) => lp.DRUM_VARIANTS[lp.DRUMS_LAYOUT[lp.padIndex(row, 1)]].note;
+  assert.ok(noteAt(1) < noteAt(2), 'kick should sit below snare');
+  assert.ok(noteAt(2) < noteAt(3), 'snare should sit below hat');
+});
+
+test('the scene column arms channels, one per tracker channel', () => {
+  assert.deepEqual([...lp.ARM_CC], [89, 79, 69, 59], 'top four, in channel order downward');
+  for (let ch = 0; ch < 4; ch++) assert.equal(lp.armCcToChannel(lp.ARM_CC[ch]), ch);
+  assert.equal(lp.armCcToChannel(49), null, 'the lower half arms nothing');
+  assert.equal(lp.armCcToChannel(99), null, 'the logo is not an arm button');
 });
 
 // --- session ----------------------------------------------------------------

@@ -12,6 +12,11 @@
 import { colors } from '../theme/colors';
 import {
   DRUMS_LAYOUT,
+  ARM_CC,
+  DRUM_CHANNEL,
+  armCcToChannel,
+  KEYS_DRUM_LAYOUT,
+  drumVariantAt,
   LOGO_CC,
   LedSurface,
   OFF,
@@ -38,7 +43,7 @@ import {
   type Layout,
   type MidiSink,
 } from './launchpad';
-import type { NoteName, ScaleName } from './types';
+import type { NoteEffect, NoteName, ScaleName } from './types';
 import { DEFAULT_BASE_OCTAVE, octaveRangeFor } from './scales';
 
 // --- palette ----------------------------------------------------------------
@@ -72,7 +77,7 @@ export const QUEUED_PALETTE = 21;
 
 // --- input ------------------------------------------------------------------
 
-export type LaunchpadEventKind = 'pad' | 'scene' | 'top' | 'logo';
+export type LaunchpadEventKind = 'pad' | 'scene' | 'arm' | 'top' | 'logo';
 
 export interface LaunchpadEvent {
   kind: LaunchpadEventKind;
@@ -84,6 +89,13 @@ export interface LaunchpadEvent {
   channel: number | null;
   /** ZzFXM note under the active layout, else null. */
   note: number | null;
+  /**
+   * The effect baked into the pad, for drum pads that carry one.
+   *
+   * Travels with the note so recording writes both, which is exactly what the
+   * grid already stores — no special case for the device.
+   */
+  effect: NoteEffect | null;
   /** Pattern for session cells and scene buttons, else null. */
   pattern: number | null;
 }
@@ -142,14 +154,20 @@ export function decodeLaunchpad(
 
   if (isCc) {
     if (index === LOGO_CC) {
-      return { kind: 'logo', index, pressed, velocity, channel: null, note: null, pattern: null };
+      return { kind: 'logo', index, pressed, velocity, channel: null, note: null, effect: null, pattern: null };
+    }
+    if (tables.layout !== 'SESSION') {
+      const armCh = armCcToChannel(index);
+      if (armCh !== null) {
+        return { kind: 'arm', index, pressed, velocity, channel: armCh, note: null, effect: null, pattern: null };
+      }
     }
     const scene = sceneCcToPattern(index);
     if (scene !== null) {
-      return { kind: 'scene', index, pressed, velocity, channel: null, note: null, pattern: scene };
+      return { kind: 'scene', index, pressed, velocity, channel: null, note: null, effect: null, pattern: scene };
     }
     if ((TOP_CC as readonly number[]).includes(index)) {
-      return { kind: 'top', index, pressed, velocity, channel: null, note: null, pattern: null };
+      return { kind: 'top', index, pressed, velocity, channel: null, note: null, effect: null, pattern: null };
     }
     return null;
   }
@@ -166,13 +184,37 @@ export function decodeLaunchpad(
       velocity,
       channel: cell.channel,
       note: null,
+      effect: null,
       pattern: cell.pattern,
     };
   }
 
-  const table = tables.layout === 'DRUMS' ? DRUMS_LAYOUT : tables.keys;
-  const note = table[index];
-  // An unmapped pad is silent rather than playing something arbitrary.
+  // Drums come from the kit, in both layouts: DRUMS is the kit alone, and in
+  // KEYS it occupies the drum quadrant while the other three stay melodic.
+  const drumTable =
+    tables.layout === 'DRUMS' ? DRUMS_LAYOUT
+    : padChannel(index) === DRUM_CHANNEL ? KEYS_DRUM_LAYOUT
+    : null;
+
+  if (drumTable) {
+    const variant = drumVariantAt(index, drumTable);
+    // An unmapped pad is silent rather than playing something arbitrary.
+    if (!variant) return null;
+    return {
+      kind: 'pad',
+      index,
+      pressed,
+      velocity,
+      channel: DRUM_CHANNEL,
+      note: variant.note,
+      effect: variant.effect,
+      pattern: null,
+    };
+  }
+
+  if (tables.layout === 'DRUMS') return null;
+
+  const note = tables.keys[index];
   if (note < 0) return null;
 
   return {
@@ -180,10 +222,10 @@ export function decodeLaunchpad(
     index,
     pressed,
     velocity,
-    // DRUMS addresses the drum channel wherever you hit it; KEYS splits by
-    // quadrant so four instruments are playable at once.
-    channel: tables.layout === 'DRUMS' ? 3 : padChannel(index),
+    // KEYS splits by quadrant so four instruments are playable at once.
+    channel: padChannel(index),
     note,
+    effect: null,
     pattern: null,
   };
 }
@@ -245,8 +287,16 @@ export function renderLaunchpad(surface: LedSurface, state: LaunchpadViewState):
   surface.set(CC_UP, scaleRgb(CURSOR_CELL, state.octave < max ? LEVEL_PRESENT : LEVEL_IDLE));
   surface.set(CC_DOWN, scaleRgb(CURSOR_CELL, state.octave > min ? LEVEL_PRESENT : LEVEL_IDLE));
 
-  if (state.layout === 'SESSION') renderSession(surface, state);
-  else renderInstrument(surface, state);
+  if (state.layout === 'SESSION') {
+    renderSession(surface, state);
+  } else {
+    // The scene column arms channels here. Hue is the channel, brightness is
+    // whether it is armed — the same language the pads use.
+    ARM_CC.forEach((cc, ch) => {
+      surface.set(cc, scaleRgb(CHANNEL_CELLS[ch], state.armed[ch] ? LEVEL_ACTIVE : LEVEL_IDLE));
+    });
+    renderInstrument(surface, state);
+  }
 }
 
 function renderSession(surface: LedSurface, state: LaunchpadViewState): void {
@@ -272,16 +322,20 @@ function renderSession(surface: LedSurface, state: LaunchpadViewState): void {
 }
 
 function renderInstrument(surface: LedSurface, state: LaunchpadViewState): void {
-  const table = state.layout === 'DRUMS' ? DRUMS_LAYOUT : state.keys;
-
   for (let row = 1; row <= 8; row++) {
     for (let col = 1; col <= 8; col++) {
       const pad = padIndex(row, col);
-      const channel = state.layout === 'DRUMS' ? 3 : padChannel(pad);
+      // Drums come from the kit in both layouts; the melodic table covers the
+      // rest. Whichever answers for this pad also decides whether it is lit.
+      const isDrum = state.layout === 'DRUMS' || padChannel(pad) === DRUM_CHANNEL;
+      const table = state.layout === 'DRUMS' ? DRUMS_LAYOUT
+        : isDrum ? KEYS_DRUM_LAYOUT
+        : state.keys;
+      const channel = isDrum ? DRUM_CHANNEL : padChannel(pad);
       if (channel === null) continue;
 
-      // A pad with no note behind it stays dark, so the drum zones read as
-      // shapes rather than a uniform wash.
+      // A pad with nothing behind it stays dark, so the kit reads as a shape
+      // rather than a uniform wash.
       if (table[pad] < 0) {
         surface.set(pad, OFF);
         continue;

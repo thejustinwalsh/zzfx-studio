@@ -17,8 +17,8 @@
  * No React, no Web MIDI calls — just bytes, so it can be tested without a
  * device on the desk.
  */
-import type { NoteName, ScaleName } from './types';
-import { DRUM_RANGES } from './noteEntry';
+import type { NoteEffect, NoteName, ScaleName } from './types';
+import { DRUM_NOTES } from './types';
 import { getScaleNotes } from './scales';
 
 // --- ports ------------------------------------------------------------------
@@ -109,6 +109,24 @@ export const CC_SESSION = 95;
 export const CC_DRUMS = 96;
 export const CC_KEYS = 97;
 export const CC_USER = 98;
+
+/**
+ * Arm toggles, in KEYS and DRUMS where the scene column is otherwise idle.
+ *
+ * The top four of the right-hand column, in channel order downward. The column
+ * cannot express the left/right half of a quadrant, so it does not try to
+ * mirror the grid's geometry — it is a plain channel list, coloured by channel
+ * so which is which needs no explanation.
+ *
+ * In SESSION the same column launches patterns, which is what the hardware's
+ * own scene-launch column is for.
+ */
+export const ARM_CC = [89, 79, 69, 59] as const;
+
+export function armCcToChannel(cc: number): number | null {
+  const i = ARM_CC.indexOf(cc as (typeof ARM_CC)[number]);
+  return i < 0 ? null : i;
+}
 
 /** The four arrows, which we deliberately leave alone. */
 export const ARROW_CC = [CC_UP, CC_DOWN, CC_LEFT, CC_RIGHT] as const;
@@ -234,6 +252,9 @@ function quadrantLocal(index: number): { row: number; col: number } {
 
 const QUADRANT_SIZE = 4;
 
+/** Drums are the fourth channel, and the one quadrant that is not melodic. */
+export const DRUM_CHANNEL = 3;
+
 /**
  * KEYS — each quadrant is sixteen scale degrees for its channel.
  *
@@ -264,6 +285,10 @@ export function buildKeysLayout(
   for (let row = 1; row <= GRID_SIZE; row++) {
     for (let col = 1; col <= GRID_SIZE; col++) {
       const index = padIndex(row, col);
+      // The drum quadrant is a kit, not a scale. Feeding it scale degrees gave
+      // sixteen pads of drums pitched by a scale that has nothing to do with
+      // percussion; KEYS_DRUM_LAYOUT covers it instead.
+      if (padChannel(index) === DRUM_CHANNEL) continue;
       const local = quadrantLocal(index);
       const degree = (local.row - 1) * QUADRANT_SIZE + (local.col - 1);
       const note = notes[degree];
@@ -274,35 +299,99 @@ export function buildKeysLayout(
 }
 
 /**
- * DRUMS — one pad per distinct drum sound, in pitch order.
+ * DRUMS — the kit the generator actually writes, not every pitch it could.
  *
- * The three voices hold different numbers of notes (KCK 6, SNR 16, HAT 26), so
- * rather than force them into equal blocks each voice fills consecutive pads
- * and the next starts on a fresh row. Every lit pad is a sound you cannot get
- * from any other pad, and the row breaks make the three zones readable by
- * position rather than colour alone.
+ * The previous layout gave one pad per note value: 6 kicks, 16 snares and 26
+ * hi-hats, distinguished only by pitch. That is not a kit — nobody needs
+ * twenty-six hi-hats a semitone apart, and none of those pads corresponds to a
+ * sound you hear in a generated song.
+ *
+ * The generator only ever puts two effects on drums — `CHANNEL_FX_POOLS[3]` is
+ * `['PD', 'BC']`, "punch kicks, crunch snares" — at fixed values. So each voice
+ * gets its raw form plus those, and a pad plays something you already recognise
+ * from your own songs rather than something invented for the hardware.
+ *
+ *        col 1   col 2      col 3      col 4
+ *  HAT   raw     PD 0x60    PD 0xA0    BC 0x18
+ *  SNR   raw     PD 0x60    PD 0xA0    BC 0x18
+ *  KCK   raw     PD 0x60    PD 0xA0    BC 0x18
+ *
+ * Voices run upward so higher on the grid is higher in pitch, as everywhere
+ * else. The effect travels with the pad, so recording one writes both the note
+ * and its effect into the grid — the tracker's own data model, not a special
+ * case for the device.
  */
-function buildDrumsLayout(): Int8Array {
-  const table = new Int8Array(INDEX_LIMIT).fill(-1);
-  let row = 1;
+export interface DrumVariant {
+  /** Canonical ZzFXM note for the voice; picks the instrument at render time. */
+  note: number;
+  effect: NoteEffect | null;
+  /** Shown in the UI, and what the grid will read back. */
+  label: string;
+}
 
-  for (const range of DRUM_RANGES) {
-    let col = 1;
-    for (let note = range.min; note <= range.max && row <= GRID_SIZE; note++) {
-      table[padIndex(row, col)] = note;
-      if (++col > GRID_SIZE) {
-        col = 1;
-        row++;
-      }
+/** Voices bottom to top, matching the grid's own low-to-high convention. */
+const DRUM_VOICE_NOTES = [DRUM_NOTES.KICK, DRUM_NOTES.SNARE, DRUM_NOTES.HAT] as const;
+const DRUM_VOICE_LABELS = ['KCK', 'SNR', 'HAT'] as const;
+
+/**
+ * Raw, then the generator's own drum effects at its own values.
+ *
+ * PD appears twice because its value is the difference between a light thump
+ * and the full drum-strength drop the generator uses (`DRUM_PD_VALUE`), and
+ * both are musically useful. Effects do not stack — `applyEffect` takes one.
+ */
+const DRUM_VARIANT_FX: readonly (NoteEffect | null)[] = [
+  null,
+  { code: 'PD', value: 0x60 },
+  { code: 'PD', value: 0xa0 },
+  { code: 'BC', value: 0x18 },
+];
+
+export const DRUM_VARIANT_COLS = DRUM_VARIANT_FX.length;
+export const DRUM_VARIANT_ROWS = DRUM_VOICE_NOTES.length;
+
+export const DRUM_VARIANTS: readonly DrumVariant[] = DRUM_VOICE_NOTES.flatMap((note, v) =>
+  DRUM_VARIANT_FX.map((effect) => ({
+    note,
+    effect,
+    label: effect
+      ? `${DRUM_VOICE_LABELS[v]} ${effect.code}${effect.value.toString(16).toUpperCase().padStart(2, '0')}`
+      : DRUM_VOICE_LABELS[v],
+  }))
+);
+
+/**
+ * Lay the kit into a grid, bottom-left of the given origin.
+ *
+ * Used twice: the DRUMS layout puts it at the bottom-left of the whole grid,
+ * and KEYS puts it in the drum quadrant. Both show the same thing, so there is
+ * one kit to learn rather than two.
+ */
+function buildDrumTable(originRow: number, originCol: number): Int8Array {
+  const table = new Int8Array(INDEX_LIMIT).fill(-1);
+  for (let v = 0; v < DRUM_VARIANT_ROWS; v++) {
+    for (let c = 0; c < DRUM_VARIANT_COLS; c++) {
+      const row = originRow + v;
+      const col = originCol + c;
+      if (row > GRID_SIZE || col > GRID_SIZE) continue;
+      table[padIndex(row, col)] = v * DRUM_VARIANT_COLS + c;
     }
-    // Start the next voice on its own row unless the last one filled exactly.
-    if (col > 1) row++;
   }
   return table;
 }
 
-/** Static, so it is built once at load rather than on every layout switch. */
-export const DRUMS_LAYOUT: Int8Array = buildDrumsLayout();
+/** Pad → index into DRUM_VARIANTS, or -1. Built once at load. */
+export const DRUMS_LAYOUT: Int8Array = buildDrumTable(1, 1);
+
+/** The same kit inside the KEYS drum quadrant (bottom-right). */
+export const KEYS_DRUM_LAYOUT: Int8Array = buildDrumTable(1, 5);
+
+/** The variant a pad plays under a layout, or null where nothing is mapped. */
+export function drumVariantAt(index: number, table: Int8Array): DrumVariant | null {
+  if (!isGridPad(index)) return null;
+  const v = table[index];
+  return v < 0 ? null : DRUM_VARIANTS[v];
+}
 
 /**
  * SESSION — column is a channel, row is a pattern, as in Ableton.

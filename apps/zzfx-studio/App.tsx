@@ -47,6 +47,7 @@ import {
   DEFAULT_BASE_OCTAVE,
   drumVoiceInstrument,
   drumVoiceOf,
+  applyEffect,
 } from './src/engine';
 import { shareCodeFromUrl, SHARE_PARAM, shouldShowMiniPlayer, loadShareCodec, prefetchShareCodec } from './src/engine/share';
 import { loadMidi } from './src/engine/midiLoader';
@@ -704,7 +705,9 @@ function Studio() {
 
   // Sound a single note through its channel's instrument. Only called when
   // playback is stopped — during playback the swapped buffer delivers the edit.
-  const handleAuditionNote = useCallback((channelIndex: number, note: number) => {
+  const handleAuditionNote = useCallback((
+    channelIndex: number, note: number, effect: NoteEffect | null = null
+  ) => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong || note <= 0) return;
     unlockAudio();
@@ -716,8 +719,11 @@ function Studio() {
     const params = channelIndex === DRUM_CHANNEL
       ? drumVoiceInstrument(base, drumVoiceOf(note))
       : [...base];
-    params[2] *= 2 ** ((note - 12) / 12);
-    const samples = ZZFX.buildSamples(...params);
+    // Voice, then effect, then pitch — the order expandSong uses. Any other
+    // order and the pad sounds unlike the note it just wrote.
+    const withFx = effect ? applyEffect(params, effect) : params;
+    withFx[2] *= 2 ** ((note - 12) / 12);
+    const samples = ZZFX.buildSamples(...withFx);
     if (samples.length > 0) zzfxP([samples]);
   }, []);
 
@@ -871,7 +877,9 @@ function Studio() {
    * are telling you — press one during playback and you hear it without
    * committing it.
    */
-  const handleLaunchpadNote = useCallback((channel: number, note: number) => {
+  const handleLaunchpadNote = useCallback((
+    channel: number, note: number, _velocity: number, effect: NoteEffect | null = null
+  ) => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong) return;
 
@@ -880,13 +888,15 @@ function Studio() {
         const graph = audioGraphRef.current;
         if (!graph) return;
         const row = quantizeToRow(graph.getPosition(), currentSong.config.bpm, GRID_ROWS);
-        useSongStore.getState().setNote(
-          useSongStore.getState().activePattern, channel, row, note
-        );
+        const label = useSongStore.getState().activePattern;
+        useSongStore.getState().setNote(label, channel, row, note);
+        // A drum pad carries its effect, so recording one writes both — which
+        // is exactly what the grid stores anyway.
+        useSongStore.getState().setEffect(label, channel, row, effect);
         scheduleChannelRerender(channel);
       });
     } else {
-      handleAuditionNote(channel, note);
+      handleAuditionNote(channel, note, effect);
     }
   }, [scheduleChannelRerender, handleAuditionNote, armedChannels]);
 
@@ -901,6 +911,7 @@ function Studio() {
     armedChannels,
     onNote: handleLaunchpadNote,
     onSelectPattern: handleLaunchpadPattern,
+    onToggleArm: toggleArm,
     octave,
     onOctaveChange: setOctave,
   });

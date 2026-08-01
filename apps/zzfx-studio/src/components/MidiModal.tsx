@@ -207,9 +207,10 @@ export function MidiModal({
                         })}
                       </View>
                       <Text style={styles.footnote}>
-                        The top row of the device switches layouts too. In KEYS each quadrant is one
-                        channel, coloured to match its track — every pad sounds, and the brighter
-                        quadrants are the armed ones whose notes also get written down.
+                        The top row switches layouts, the arrows step the octave, and the right-hand
+                        column arms channels. In KEYS three quadrants are melodic and the fourth is
+                        the drum kit — each voice raw, then with the effects the generator uses.
+                        Every pad sounds; the brighter ones also get written down.
                       </Text>
                     </>
                   )}

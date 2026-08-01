@@ -4,7 +4,7 @@ import { loadLaunchpad } from '../engine/launchpadLoader';
 import type { LaunchpadEvent, LaunchpadSession, LaunchpadViewState } from '../engine/launchpadDevice';
 import { CC_DOWN, CC_DRUMS, CC_KEYS, CC_SESSION, CC_UP, type Layout } from '../engine/launchpad';
 import { DEFAULT_BASE_OCTAVE, octaveRangeFor } from '../engine/scales';
-import type { PatternLabel, Song } from '../engine/types';
+import type { NoteEffect, PatternLabel, Song } from '../engine/types';
 
 /** Notes start at index 2 of a channel row; the first two are instrument and pan. */
 const NOTE_OFFSET = 2;
@@ -30,9 +30,11 @@ export interface UseLaunchpadOptions {
   activePattern: PatternLabel;
   armedChannels: number[];
   /** A pad played a note. Mirrors the MIDI note path. */
-  onNote: (channel: number, note: number, velocity: number) => void;
+  onNote: (channel: number, note: number, velocity: number, effect: NoteEffect | null) => void;
   /** A session cell or scene button selected a pattern. */
   onSelectPattern: (patternIndex: number) => void;
+  /** The scene column armed or disarmed a channel. */
+  onToggleArm: (channel: number) => void;
   /** The tracker's octave, shared with the grid rather than held separately. */
   octave: number;
   onOctaveChange: (next: number) => void;
@@ -70,7 +72,9 @@ export function useLaunchpad(opts: UseLaunchpadOptions): LaunchpadControls {
 
   const supported = typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator;
 
-  const { song, activePattern, armedChannels, onNote, onSelectPattern, octave, onOctaveChange } = opts;
+  const {
+    song, activePattern, armedChannels, onNote, onSelectPattern, onToggleArm, octave, onOctaveChange,
+  } = opts;
   const key = song?.config.key ?? 'C';
   const scale = song?.config.scale ?? 'major';
 
@@ -132,6 +136,11 @@ export function useLaunchpad(opts: UseLaunchpadOptions): LaunchpadControls {
       return;
     }
 
+    if (event.kind === 'arm') {
+      if (event.pressed && event.channel !== null) onToggleArm(event.channel);
+      return;
+    }
+
     if (event.kind === 'scene') {
       if (event.pressed && event.pattern !== null) onSelectPattern(event.pattern);
       return;
@@ -151,7 +160,7 @@ export function useLaunchpad(opts: UseLaunchpadOptions): LaunchpadControls {
 
     if (event.pattern !== null) onSelectPattern(event.pattern);
     else if (event.channel !== null && event.note !== null) {
-      onNote(event.channel, event.note, event.velocity);
+      onNote(event.channel, event.note, event.velocity, event.effect);
     }
   });
 
