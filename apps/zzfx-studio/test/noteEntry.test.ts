@@ -303,11 +303,13 @@ test('the voice lookup agrees with the name shown in the grid', () => {
   }
 });
 
-test('each voice produces an audibly different instrument', () => {
-  // The bug this guards: all three were the same broadband noise burst.
+test('the voice lookup and the instrument agree about pitch order', () => {
+  // Pitch ordering only; drums.test.ts covers the rest -- envelopes, tonality
+  // and whether the archetype survives -- with measurements rather than a
+  // ratio, after a ratio threshold here failed to notice the kick had turned
+  // into a bubble.
   const base = [0.8, 0, 350, 0, 0.01, 0.08, 4, 1, -8, 0, 0, 0, 0, 0.5, 0, 0, 0, 0.05, 0.04, 0];
-  const freq = (voice: string) => instruments.drumVoiceInstrument(base, voice)[2];
-  assert.ok(freq('KICK') < freq('SNARE'), 'the kick should sit below the snare');
-  assert.ok(freq('SNARE') < freq('HAT'), 'the snare should sit below the hat');
-  assert.ok(freq('HAT') / freq('KICK') > 4, 'the three voices are too close to tell apart');
+  const freq = (note: number) => instruments.drumVoiceInstrument(base, instruments.drumVoiceOf(note))[2];
+  assert.ok(freq(1) < freq(14), 'the kick should sit below the snare');
+  assert.ok(freq(14) < freq(32), 'the snare should sit below the hat');
 });
