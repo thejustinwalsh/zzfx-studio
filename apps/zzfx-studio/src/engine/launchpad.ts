@@ -555,6 +555,17 @@ export class LedSurface {
   private readonly shown = new Int32Array(INDEX_LIMIT);
 
   /**
+   * Cached windows over `bytes`, one per frame length.
+   *
+   * Keyed by length rather than holding a single view, because lengths
+   * alternate in normal use: a lit pad is a five-byte RGB spec and a dark one a
+   * three-byte palette spec, so a playhead step and its cleanup differ in size
+   * and a one-entry cache would thrash between them. Few distinct lengths ever
+   * occur, and each entry is a window on the same memory, never a copy.
+   */
+  private readonly views = new Map<number, Uint8Array>();
+
+  /**
    * The model decides one byte of the header. Everything after it — the LED
    * command, the pad numbering, the colour spec — is identical across models.
    */
@@ -626,11 +637,22 @@ export class LedSurface {
     return n;
   }
 
-  /** Flush and transmit, if anything moved. */
+  /**
+   * Flush and transmit, if anything moved.
+   *
+   * Views are cached because `subarray` allocates one per call and this runs
+   * several times a second while playing. The same handful of frame lengths
+   * recur, so after the first of each the steady state allocates nothing.
+   */
   send(port: MidiSink): boolean {
     const n = this.flush();
     if (n === 0) return false;
-    port.send(this.bytes.subarray(0, n));
+    let view = this.views.get(n);
+    if (!view) {
+      view = this.bytes.subarray(0, n);
+      this.views.set(n, view);
+    }
+    port.send(view);
     return true;
   }
 }

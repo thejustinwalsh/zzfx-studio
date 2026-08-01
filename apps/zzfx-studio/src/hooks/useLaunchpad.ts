@@ -69,7 +69,21 @@ export function useLaunchpad(opts: UseLaunchpadOptions): LaunchpadControls {
   const [deviceName, setDeviceName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [layout, setLayout] = useState<Layout>('KEYS');
-  const [held, setHeld] = useState<ReadonlySet<number>>(NO_PADS);
+  /**
+   * Pads under a finger, and the layout they were pressed in.
+   *
+   * A release is only decoded for a pad the *current* layout maps, so holding a
+   * melodic pad in KEYS, switching to DRUMS and letting go discards the release
+   * and leaves the pad lit as held forever. Tying the set to its layout drops
+   * it by derivation on any switch — nothing is meaningfully still held across
+   * one — without setting state from an effect to do it.
+   */
+  const [heldIn, setHeldIn] = useState<{ layout: Layout; pads: ReadonlySet<number> }>(
+    { layout: 'KEYS', pads: NO_PADS }
+  );
+
+  /** Only pads held in the layout on screen count. */
+  const held = heldIn.layout === layout ? heldIn.pads : NO_PADS;
 
   const sessionRef = useRef<LaunchpadSession | null>(null);
 
@@ -152,11 +166,11 @@ export function useLaunchpad(opts: UseLaunchpadOptions): LaunchpadControls {
     if (event.kind !== 'pad') return;
 
     // Light under the finger, whatever else the pad does.
-    setHeld((prev) => {
-      const next = new Set(prev);
-      if (event.pressed) next.add(event.index);
-      else next.delete(event.index);
-      return next;
+    setHeldIn((prev) => {
+      const pads = new Set(prev.layout === layout ? prev.pads : []);
+      if (event.pressed) pads.add(event.index);
+      else pads.delete(event.index);
+      return { layout, pads };
     });
 
     if (!event.pressed) return;
@@ -220,7 +234,7 @@ export function useLaunchpad(opts: UseLaunchpadOptions): LaunchpadControls {
       sessionRef.current = null;
       setEnabled(false);
       setDeviceName(null);
-      setHeld(NO_PADS);
+      setHeldIn({ layout: 'KEYS', pads: NO_PADS });
     };
   }, [wanted]);
 

@@ -20,7 +20,6 @@ import {
   LOGO_CC,
   LedSurface,
   OFF,
-  DEFAULT_MODEL,
   modelForPort,
   programmerModeOff,
   programmerModeOn,
@@ -44,6 +43,7 @@ import {
   type MidiSink,
 } from './launchpad';
 import type { NoteEffect, NoteName, ScaleName } from './types';
+import { claimPort } from './midiPorts';
 import { DEFAULT_BASE_OCTAVE, octaveRangeFor } from './scales';
 
 // --- palette ----------------------------------------------------------------
@@ -380,13 +380,35 @@ export function findLaunchpadPorts(access: MIDIAccess): LaunchpadPorts | null {
   const inputs = access.inputs as unknown as Map<string, MIDIInput>;
   const outputs = access.outputs as unknown as Map<string, MIDIOutput>;
 
-  const input = [...inputs.values()].find((p) => isLaunchpadControlPort(p.name ?? ''));
-  const output = [...outputs.values()].find((p) => isLaunchpadControlPort(p.name ?? ''));
-  if (!input || !output) return null;
-  // Identify from the port name: it decides the SysEx device byte, and on the
-  // Pro it decides how Programmer mode is entered at all.
-  const model = modelForPort(input.name ?? '') ?? DEFAULT_MODEL;
-  return { input, output, model };
+  /**
+   * Pair the input and output of the *same* device.
+   *
+   * Picking the first matching input and the first matching output
+   * independently is wrong the moment two Launchpads are plugged in: map order
+   * can give input A and output B, so presses arrive from one device while
+   * lighting goes to the other — and with different models the SysEx device
+   * byte is taken from A and sent to B, where it means nothing.
+   *
+   * Model first, since that is what actually has to agree; then the port name
+   * up to its direction word, which pairs `LPX MIDI In` with `LPX MIDI Out`
+   * and keeps two identical devices apart when the host numbers them.
+   */
+  const stem = (name: string) => name.replace(/\s*(In|Out|Input|Output)\b.*$/i, '').trim();
+
+  for (const input of inputs.values()) {
+    if (!isLaunchpadControlPort(input.name ?? '')) continue;
+    const model = modelForPort(input.name ?? '');
+    if (!model) continue;
+
+    const output = [...outputs.values()].find(
+      (o) =>
+        isLaunchpadControlPort(o.name ?? '') &&
+        modelForPort(o.name ?? '')?.id === model.id &&
+        stem(o.name ?? '') === stem(input.name ?? '')
+    );
+    if (output) return { input, output, model };
+  }
+  return null;
 }
 
 export function isSysexSupported(): boolean {
@@ -427,17 +449,30 @@ export async function openLaunchpad(opts: OpenLaunchpadOptions): Promise<Launchp
   // a full repaint rather than a diff against an assumed-dark grid.
   surface.invalidate();
 
-  input.onmidimessage = (e: MIDIMessageEvent) => {
+  const onMessage = (e: MIDIMessageEvent) => {
     const event = decodeLaunchpad(e.data ?? [], tables);
     if (event) opts.onEvent(event);
   };
+  input.addEventListener('midimessage', onMessage as EventListener);
+
+  // While we drive this device, its pads mean grid positions rather than notes.
+  // Claiming the port keeps generic MIDI input from also hearing them and
+  // entering a note for every pad press.
+  const releasePort = claimPort(input.id);
 
   const restore = () => {
     if (disposed) return;
     disposed = true;
+    // Separate attempts on purpose. Sharing one try meant a throwing blackout
+    // jumped straight past the mode-off, leaving the device in the dark
+    // Programmer layout this function exists to escape.
     try {
       surface.clear();
       surface.send(output);
+    } catch {
+      // The blackout is cosmetic; leaving Programmer mode is not.
+    }
+    try {
       output.send(programmerModeOff(model));
     } catch {
       // The port is already gone — nothing left to restore.
@@ -474,7 +509,8 @@ export async function openLaunchpad(opts: OpenLaunchpadOptions): Promise<Launchp
       surface.invalidate();
     },
     dispose() {
-      input.onmidimessage = null;
+      input.removeEventListener('midimessage', onMessage as EventListener);
+      releasePort();
       access.removeEventListener?.('statechange', onStateChange);
       if (typeof window !== 'undefined') {
         window.removeEventListener('pagehide', onPageHide);

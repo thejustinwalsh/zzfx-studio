@@ -6,6 +6,7 @@
  * controller. Kept free of React so the mapping can be tested without a device.
  */
 import { DEFAULT_BASE_OCTAVE } from './scales';
+import { isPortClaimed, onClaimsChanged } from './midiPorts';
 
 /** MIDI note 60 is middle C; ZzFXM's note 12 is the instrument's own frequency. */
 const MIDI_MIDDLE_C = 60;
@@ -143,12 +144,34 @@ export async function startMidi(
   // without the iteration methods.
   const inputs = access.inputs as unknown as Map<string, MIDIInput>;
 
+  // One handler, attached and detached per port, so this never overwrites or
+  // clears a listener belonging to Launchpad control on the same port.
+  const handler = (e: MIDIMessageEvent) => {
+    const parsed = parseMidiMessage(e.data ?? []);
+    if (parsed) onNote(parsed);
+  };
+
+  const bound = new Set<MIDIInput>();
+
+  const unbind = (input: MIDIInput) => {
+    input.removeEventListener('midimessage', handler as EventListener);
+    bound.delete(input);
+  };
+
+  /**
+   * Bind every port except those another system owns.
+   *
+   * A Launchpad's control port is claimed while it is under Programmer-mode
+   * control; its pads mean grid positions there, not notes, so letting the
+   * generic path also hear them would enter a note for every pad press.
+   */
   const listen = () => {
     for (const input of inputs.values()) {
-      input.onmidimessage = (e: MIDIMessageEvent) => {
-        const parsed = parseMidiMessage(e.data ?? []);
-        if (parsed) onNote(parsed);
-      };
+      const claimed = isPortClaimed(input.id);
+      if (claimed && bound.has(input)) unbind(input);
+      if (claimed || bound.has(input)) continue;
+      input.addEventListener('midimessage', handler as EventListener);
+      bound.add(input);
     }
   };
 
@@ -168,10 +191,15 @@ export async function startMidi(
     onDevicesChanged?.(snapshot());
   };
 
+  // The two systems can be enabled in either order, so react to a claim made
+  // after this one bound the port.
+  const stopWatchingClaims = onClaimsChanged(listen);
+
   return {
     devices: snapshot(),
     dispose() {
-      for (const input of inputs.values()) input.onmidimessage = null;
+      stopWatchingClaims();
+      for (const input of [...bound]) unbind(input);
       access.onstatechange = null;
     },
   };

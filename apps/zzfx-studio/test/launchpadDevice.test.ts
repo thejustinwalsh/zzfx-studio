@@ -403,3 +403,35 @@ test('DRUMS leaves everything outside the kit dark', () => {
     }
   }
 });
+
+// --- teardown ----------------------------------------------------------------
+
+test('a failing blackout still leaves programmer mode', () => {
+  // Both messages used to share one try, so a throwing blackout jumped past the
+  // mode-off and stranded the device dark in Programmer mode -- the exact state
+  // the teardown exists to escape.
+  const sent: number[][] = [];
+  let first = true;
+  const port = {
+    send(d: Uint8Array) {
+      if (first) { first = false; throw new Error('port hiccup'); }
+      sent.push([...d]);
+    },
+  };
+
+  // Mirror the restore sequence: blackout, then mode-off.
+  const surface = new lp.LedSurface();
+  surface.flush();
+  surface.set(lp.padIndex(1, 1), lp.rgbFromHex('#4ADE80'));
+  surface.flush();
+
+  try { surface.clear(); surface.send(port); } catch { /* cosmetic */ }
+  try { port.send(lp.programmerModeOff(lp.DEFAULT_MODEL)); } catch { /* gone */ }
+
+  assert.equal(sent.length, 1, 'the mode-off must still be attempted');
+  assert.equal(
+    sent[0].join(' '),
+    [...lp.programmerModeOff(lp.DEFAULT_MODEL)].join(' '),
+    'and it must be the mode-off message'
+  );
+});

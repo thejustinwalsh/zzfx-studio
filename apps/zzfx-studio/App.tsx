@@ -224,6 +224,7 @@ function Studio() {
   // MIDI. The module is loaded on demand — requesting access needs a user
   // gesture anyway, and most sessions never touch a controller.
   const [showMidi, setShowMidi] = useState(false);
+  const [midiWanted, setMidiWanted] = useState(false);
   const [midiEnabled, setMidiEnabled] = useState(false);
   const [midiDevices, setMidiDevices] = useState<{ id: string; name: string; manufacturer: string }[]>([]);
   const [midiError, setMidiError] = useState<string | null>(null);
@@ -833,31 +834,58 @@ function Studio() {
     });
   });
 
-  const enableMidi = useCallback(async () => {
+  const enableMidi = useCallback(() => {
     setMidiError(null);
-    try {
-      const { startMidi } = await loadMidi();
-      const session = await startMidi(
-        (e) => handleMidiNote(e),
-        (devices) => setMidiDevices(devices),
-      );
-      midiSessionRef.current = session;
-      setMidiDevices(session.devices);
-      setMidiEnabled(true);
-    } catch (err) {
-      setMidiError(err instanceof Error ? err.message : 'Could not reach MIDI');
+    setMidiWanted(true);
+  }, []);
+
+  const disableMidi = useCallback(() => setMidiWanted(false), []);
+
+  /**
+   * Connect and disconnect.
+   *
+   * Driven by a flag rather than done in the button's handler, for two reasons.
+   * `handleMidiNote` is an effect event and those may only be reached from an
+   * effect. And the handler could be entered twice while the permission prompt
+   * was still open: each call installed listeners but only the last was stored,
+   * so disconnect disposed one session and left the other running, doubling
+   * every note. An unmount during the prompt was worse — cleanup saw a null ref
+   * and the session that arrived afterwards was never disposed at all.
+   *
+   * A flag collapses repeats into one effect run, and the cancelled path
+   * disposes a session that arrives too late.
+   */
+  useEffect(() => {
+    if (!midiWanted) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const { startMidi } = await loadMidi();
+        if (cancelled) return;
+        const session = await startMidi(handleMidiNote, (devices) => setMidiDevices(devices));
+        if (cancelled) {
+          session.dispose();
+          return;
+        }
+        midiSessionRef.current = session;
+        setMidiDevices(session.devices);
+        setMidiEnabled(true);
+      } catch (err) {
+        if (cancelled) return;
+        setMidiError(err instanceof Error ? err.message : 'Could not reach MIDI');
+        setMidiWanted(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      midiSessionRef.current?.dispose();
+      midiSessionRef.current = null;
       setMidiEnabled(false);
-    }
-  }, []);
-
-  const disableMidi = useCallback(() => {
-    midiSessionRef.current?.dispose();
-    midiSessionRef.current = null;
-    setMidiEnabled(false);
-    setMidiDevices([]);
-  }, []);
-
-  useEffect(() => () => { midiSessionRef.current?.dispose(); }, []);
+      setMidiDevices([]);
+    };
+  }, [midiWanted]);
 
   const toggleArm = useCallback((ch: number) => {
     // The arm column on the device and the on-screen buttons share this, so

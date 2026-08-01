@@ -283,17 +283,38 @@ test('clear darkens everything that was lit', () => {
   assert.equal(f.length, 7 + 2 * 3 + 1, 'clear resent pads that were already dark');
 });
 
-test('flushing reuses one buffer, so a repaint allocates nothing', () => {
+test('a steady-state repaint allocates nothing, send() included', () => {
+  // The earlier version of this test only checked that `bytes` kept its
+  // identity and never called send() -- where subarray() was allocating a view
+  // every frame. It passed while the property it claimed was false.
   const s = new lp.LedSurface();
   const buf = s.bytes;
-  s.flush();
+  const sent: unknown[] = [];
+  const port = { send: (d: Uint8Array) => sent.push(d) };
+
+  s.send(port);                       // initial blackout
+  const firstView = sent[0];
+
+  // A playhead-shaped change: the same eight pads move each step, so every
+  // frame after the first has the same length.
   for (let i = 0; i < 50; i++) {
-    s.set(11, i % 2 ? lp.rgbFromHex('#4ADE80') : lp.OFF);
-    s.flush();
+    for (let col = 1; col <= 8; col++) {
+      s.set(lp.padIndex(1, col), i % 2 ? lp.rgbFromHex('#E8740E') : lp.OFF);
+    }
+    s.send(port);
   }
+
   assert.equal(s.bytes, buf, 'the frame buffer was reallocated');
-  assert.equal(buf.length, lp.MAX_FRAME_BYTES);
+  // Lit frames carry five-byte RGB specs and dark frames three-byte palette
+  // specs, so the loop alternates between exactly two lengths. Two views for
+  // fifty frames means the steady state stopped allocating after the first of
+  // each; the previous code produced fifty.
+  const views = new Set(sent.slice(1));
+  assert.ok(views.size <= 2, `send() allocated ${views.size} views across 50 frames of 2 lengths`);
+  assert.notEqual(sent[1], firstView, 'the blackout is a different length, so a different view');
+  assert.equal((sent[1] as Uint8Array).buffer, buf.buffer, 'the view must window the same memory, not copy');
 });
+
 
 test('send transmits only when something moved', () => {
   const sent: number[][] = [];
