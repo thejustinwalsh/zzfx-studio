@@ -5,6 +5,29 @@
 > Branch: claude/tracker-note-entry-def3a5
 > PR: https://github.com/thejustinwalsh/zzfx-studio/pull/7
 
+### d7d96e52408afc7ec8fd43c844ee195aab883f20
+fix: Enter never reached the grid, and the cursor grew the row
+Enter did nothing on a cell you had just clicked, which the help modal
+documents as working. React Native Web's PressResponder handles Enter and
+Space on every Pressable and calls stopPropagation() unconditionally; the
+cells are Pressables, so the grid's bubble-phase window listener never saw the
+key. Removing accessibilityRole earlier did not help because the role only
+gates the spacebar preventDefault two lines above, not the stopPropagation.
+
+Listening in the capture phase fixes it — capture runs on the way down, before
+the responder can swallow anything. Capture also means the listener sees keys
+before a text field does, so it now skips editable targets rather than
+stealing them; verified that typing a note letter into the song name still
+reaches the input and enters no note.
+
+Separately, styles.cellCursor added borderWidth: 1 to an auto-height cell, so
+the row grew two pixels whenever the cursor landed on it and the grid shifted
+as you arrowed around. The fields now reserve a transparent border and the
+cursor changes only its colour. Measured: cursor and plain cells both 19.5px,
+reflow 0.
+Files: apps/zzfx-studio/src/components/PatternGrid.tsx
+Stats: 1 file changed, 22 insertions(+), 3 deletions(-)
+
 ### d8354a5f7a694c6e14786ad895777ff9962a98c4
 fix: address review on #7
 Stale song snapshots: the regenerate handlers read the song, awaited a render,
