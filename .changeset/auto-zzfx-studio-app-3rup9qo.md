@@ -5,6 +5,28 @@
 > Branch: claude/tracker-note-entry-def3a5
 > PR: https://github.com/thejustinwalsh/zzfx-studio/pull/7
 
+### b0fb6c55385d8e584b2a8ec9c7339313d3ba754a
+fix: the kick is a low-end thud, not a wash
+Lengthening the tail was wrong. A low noise burst stretched to nearly twice the
+archetype's length is a wash, not a thump -- audibly a different instrument,
+and the reason the kick still sounded wild after the sine body was removed.
+
+It keeps the archetype's own envelope now. The weight comes from being low and
+hitting hard instead: 0.65x pitch, a slide steepened 1.25x for the drop, and a
+touch more level. Both of those have a ceiling -- shape 4 is sin(t**3), so a
+low enough frequency or a steep enough sweep rings as a tone whatever the shape
+underneath. Swept both: this sits at a spectral peak-to-mean of 4.1, against
+3.5 for the archetype it came from and 112 for the sine-bodied version.
+
+Snare and hat are untouched; they were right.
+
+Two tests changed with the design and one is new. The slide assertion allows a
+deepening but no reversal and no runaway, since that is the parameter that
+rings. "The kick is a thud, not a wash" bounds its length against its own
+archetype and fails on the version this replaces.
+Files: apps/zzfx-studio/src/engine/instruments.ts, apps/zzfx-studio/test/drums.test.ts
+Stats: 2 files changed, 40 insertions(+), 16 deletions(-)
+
 ### 9dc63711ea5a1478357643469bda29923c35c25d
 fix: drums vary again instead of bubbling
 The kick was given a sine body and a steep downward slide, which is a
