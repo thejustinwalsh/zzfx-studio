@@ -395,16 +395,19 @@ export function drumVoiceInstrument(base: ZzFXSound, voice: DrumVoice): ZzFXSoun
 
   switch (voice) {
     case 'KICK':
-      // Pitch is the one parameter that must be handled carefully here. Shape 4
-      // is sin(t**3): its broadband character comes from phase accelerating
-      // fast, so dropping the frequency far enough turns the same shape into an
-      // audible descending tone -- a bubble, not a drum. Measured, it stays
-      // broadband down to about 0.65x and goes tonal below it, and steepening
-      // the slide tips it over on its own. So: lower, but only so far, and the
-      // archetype's own slide is left alone.
-      scale(2, 0.65);
-      scale(5, 1.9);     // the long tail is what actually says "kick"
-      scale(18, 1.9);
+      // A low-end thud: low, and short. The envelope is deliberately left at
+      // the archetype's own length -- stretching it produced a long, low noise
+      // wash rather than a thump, which is the wrong instrument entirely.
+      //
+      // Pitch and slide both need care. Shape 4 is sin(t**3), so its broadband
+      // character comes from phase accelerating fast; take the frequency far
+      // enough down, or steepen the slide far enough, and the same shape rings
+      // as a descending tone instead. Swept both: 0.65x with 1.25x slide sits
+      // at a spectral peak-to-mean of 4.1, against 3.5 for the archetype and
+      // 112 for the sine-bodied version that sounded like a bubble.
+      scale(2, 0.65);    // the low end
+      scale(8, 1.25);    // and the drop that makes it thud
+      scale(0, 1.1, 1);  // a little more weight
       break;
     case 'SNARE':
       // The reference point: the archetype as written, with a touch more

@@ -79,28 +79,49 @@ test('the archetype still decides how a drum sounds', () => {
 });
 
 test('a voice never replaces the archetype waveform', () => {
+  // Shape and curve are the archetype's identity. Swapping the kick's shape for
+  // a sine is what produced a bubble; a voice may only adjust how the archetype
+  // is played, never what it is.
   for (const [aname, base] of Object.entries(ARCHETYPES)) {
     for (const v of VOICES) {
       const p = instruments.drumVoiceInstrument(base, v);
       assert.equal(p[6], base[6], `${aname} ${v} changed the shape`);
       assert.equal(p[7], base[7], `${aname} ${v} changed the shape curve`);
-      assert.equal(p[8], base[8], `${aname} ${v} changed the slide`);
+      // The slide may deepen, but never reverse or run away: a steep enough
+      // sweep rings as a tone whatever the shape underneath it.
+      assert.ok(
+        Math.sign(p[8]) === Math.sign(base[8]) && Math.abs(p[8]) <= Math.abs(base[8]) * 1.3,
+        `${aname} ${v} slide went from ${base[8]} to ${p[8]}`
+      );
     }
   }
 });
 
-test('the three voices separate by pitch and by envelope', () => {
-  // Kick lowest and longest, hat highest and shortest. Shape 4 is broadband at
-  // any frequency, so pitch alone never distinguished them -- the envelope is
-  // what the ear actually uses.
+test('the voices separate low to high, and the hat is the short one', () => {
   for (const [aname, base] of Object.entries(ARCHETYPES)) {
     const f = (v: string) => instruments.drumVoiceInstrument(base, v)[2];
     assert.ok(f('KICK') < f('SNARE'), `${aname}: kick should sit below snare`);
     assert.ok(f('SNARE') < f('HAT'), `${aname}: snare should sit below hat`);
 
     const d = (v: keyof typeof NOTE) => decaySamples(render(base, v, NOTE[v]));
-    assert.ok(d('KICK') > d('SNARE') * 1.4, `${aname}: the kick should ring longer than the snare`);
     assert.ok(d('SNARE') > d('HAT') * 2, `${aname}: the hat should be far shorter than the snare`);
+  }
+});
+
+test('the kick is a thud, not a wash', () => {
+  // It was given a tail nearly twice the archetype's, which turns a low noise
+  // burst into a long wash -- audibly the wrong instrument. A kick gets its
+  // weight from being low and hitting hard, not from ringing on.
+  for (const [aname, base] of Object.entries(ARCHETYPES)) {
+    const archetype = ZZFX.buildSamples(...base).length;
+    const kick = render(base, 'KICK', NOTE.KICK).length;
+    assert.ok(
+      kick <= archetype * 1.15,
+      `${aname}: the kick runs ${kick} samples against the archetype's ${archetype} -- it is washing, not thudding`
+    );
+    // And it must actually be the low one.
+    const p = instruments.drumVoiceInstrument(base, 'KICK');
+    assert.ok(p[2] < base[2] * 0.8, `${aname}: the kick is not low enough to read as low end`);
   }
 });
 
