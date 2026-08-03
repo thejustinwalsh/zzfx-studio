@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { ZZFX } from 'zzfx';
 
 import * as instMod from '../src/engine/instruments';
+import * as fxMod from '../src/engine/effects';
 const instruments = (instMod as any).default ?? instMod;
+const effects = (fxMod as any).default ?? fxMod;
 
 const VOICES = ['KICK', 'SNARE', 'HAT'] as const;
 
@@ -55,6 +57,13 @@ const STANDARD = [0.8, 0, 350, 0, 0.01, 0.08, 4, 1.0, -8, 0, 0, 0, 0, 0.5, 0, 0,
 const BOOMY    = [0.9, 0, 300, 0, 0.02, 0.12, 4, 1.0, -6, 0, 0, 0, 0, 0.55, 0, 0, 0, 0.08, 0.05, 0];
 const METALLIC = [0.7, 0, 420, 0, 0.008, 0.07, 4, 1.0, -4, 0, 0, 0, 0, 0.3, 0, 0, 0, 0.04, 0.03, 0];
 const ARCHETYPES = { STANDARD, BOOMY, METALLIC };
+
+// The two that were missing from the fixtures, and the pair that broke.
+const TIGHT   = [0.85, 0, 380, 0, 0.005, 0.05, 4, 1.0, -10, 0,0,0,0, 0.45, 0, 0,   0, 0.03, 0.03, 0];
+const CRUSHED = [0.85, 0, 400, 0, 0.012, 0.09, 4, 1.0, -12, 0,0,0,0, 0.6,  0, 1.5, 0, 0.05, 0.04, 0];
+const ARCHETYPES_ALL = { STANDARD, TIGHT, BOOMY, CRUSHED, METALLIC };
+
+const rms = (x: number[]) => Math.sqrt(x.reduce((s, v) => s + v * v, 0) / Math.max(1, x.length));
 
 const render = (base: number[], voice: string, note: number) => {
   const p = instruments.drumVoiceInstrument(base, voice);
@@ -181,4 +190,28 @@ test('padding a short archetype leaves no holes', () => {
     assert.equal(p.length, 20);
     for (let i = 0; i < 20; i++) assert.equal(typeof p[i], 'number', `slot ${i} is not a number`);
   }
+});
+
+test('no archetype leaves a voice inaudible', () => {
+  // The `crushed` archetype carries bitCrush 1.5, a 294Hz effective sample
+  // rate. Applied to a hat -- which is nothing but high frequencies -- it left
+  // it at a seventh of every other archetype's level, with its pitch collapsed.
+  // One kit in five was broken.
+  for (const [aname, base] of Object.entries(ARCHETYPES_ALL)) {
+    const reference = rms(ZZFX.buildSamples(...base));
+    for (const v of VOICES) {
+      const level = rms(render(base, v, NOTE[v])) / reference;
+      assert.ok(
+        level > 0.35,
+        `${aname} ${v} renders at ${level.toFixed(2)}x the archetype — inaudible next to the others`
+      );
+    }
+  }
+});
+
+test('bit crush is aimed at the voice that can take it', () => {
+  // It is a sample-and-hold, so its damage is proportional to pitch: on an
+  // 11kHz snare it aliased down to ~1kHz. The kick is low enough to survive it.
+  assert.equal(effects.drumEffectTarget('BC'), 'kicks', 'crush must not be aimed at snares');
+  assert.equal(effects.drumEffectTarget('PD'), 'kicks');
 });

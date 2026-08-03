@@ -75,6 +75,12 @@ const FX_VALUES: Record<EffectCode, number> = {
 // Drums need a heavier pitch drop for audible thump
 const DRUM_PD_VALUE = 0xA0;
 
+
+/** The value a drum effect should use, where it differs from the default. */
+function drumFxValue(code: EffectCode): number {
+  return code === 'PD' ? DRUM_PD_VALUE : FX_VALUES[code];
+}
+
 // Which effects each logical channel can use
 const CHANNEL_FX_POOLS: EffectCode[][] = [
   ['SU', 'SD', 'VB', 'DT', 'ST', 'PD'], // Lead — full expression palette
@@ -159,9 +165,18 @@ function classifyDrumPositions(notes: number[]): { kicks: number[]; snares: numb
 }
 
 // Map drum effect codes to which drum hits they target
+export function drumEffectTarget(code: EffectCode): 'kicks' | 'snares' {
+  return DRUM_EFFECT_TARGETS[code];
+}
+
 const DRUM_EFFECT_TARGETS: Record<EffectCode, 'kicks' | 'snares'> = {
   PD: 'kicks',   // pitch drop punches kicks
-  BC: 'snares',  // bit crush crunches snares
+  // Bit crush is a sample-and-hold, so it is really an effective-sample-rate
+  // control and its damage is proportional to pitch. Aimed at snares it was
+  // aliasing an 11kHz voice down to about 1kHz -- not a crunchy snare, a
+  // different and much quieter instrument. The kick is low enough to survive
+  // it, and a crushed kick is the sound this was reaching for anyway.
+  BC: 'kicks',
   SU: 'kicks', SD: 'kicks', VB: 'kicks', DT: 'kicks', ST: 'kicks', TR: 'kicks', // unused but typed
 };
 
@@ -330,7 +345,7 @@ function generateDrumEffects(
   });
   const primaryPositions = selectPositions(sortedPrimary, notes, primaryBudget);
   for (const pos of primaryPositions) {
-    const value = primaryEffect === 'PD' ? DRUM_PD_VALUE : FX_VALUES[primaryEffect];
+    const value = drumFxValue(primaryEffect);
     effects[pos] = { code: primaryEffect, value };
   }
 
@@ -347,7 +362,7 @@ function generateDrumEffects(
       });
     const secondaryPositions = selectPositions(sortedSecondary, notes, secondaryBudget);
     for (const pos of secondaryPositions) {
-      const value = secondaryEffect === 'PD' ? DRUM_PD_VALUE : FX_VALUES[secondaryEffect];
+      const value = drumFxValue(secondaryEffect);
       effects[pos] = { code: secondaryEffect, value };
     }
   }

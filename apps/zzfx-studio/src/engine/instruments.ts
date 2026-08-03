@@ -393,6 +393,25 @@ export function drumVoiceInstrument(base: ZzFXSound, voice: DrumVoice): ZzFXSoun
   const scale = (i: number, by: number, cap = Infinity) =>
     { p[i] = Math.min(cap, (base[i] ?? 0) * by); };
 
+  /**
+   * Ceiling on the archetype's own bit crush, per voice.
+   *
+   * ZzFX's bitCrush is a sample-and-hold: it recomputes one sample in every
+   * `bitCrush * 100`, so it is really an effective-sample-rate control, and its
+   * damage is entirely relative to pitch -- harmless on a 100Hz kick, fatal to
+   * an 11kHz hat. The `crushed` archetype carries 1.5, which holds 150 samples:
+   * a 294Hz effective rate that annihilates anything above ~150Hz. Its hat
+   * measured a seventh of every other archetype's, with its pitch collapsed.
+   *
+   * The hold is a whole number of samples, so the steps are coarse: 1 is no
+   * crushing, 2 is 22kHz, 3 is 14.7kHz. There is no setting that audibly
+   * crushes an 11kHz hat without halving its pitch -- measured, hold 2 already
+   * takes it from 11.3kHz to 5.1kHz. So the pitched-noise voices are held at
+   * the gentlest step that still does anything, and the crushed archetype
+   * keeps its character through its other parameters instead.
+   */
+  const capCrush = (max: number) => { p[15] = Math.min(p[15] ?? 0, max); };
+
   switch (voice) {
     case 'KICK':
       // The one voice that cannot be made of noise.
@@ -421,6 +440,7 @@ export function drumVoiceInstrument(base: ZzFXSound, voice: DrumVoice): ZzFXSoun
       // The reference point: the archetype as written, with a touch more
       // rattle. Moving it would only push the other two around.
       scale(13, 1.25, 1);
+      capCrush(0.02);    // the gentlest crush that is not simply off
       break;
     case 'HAT':
       scale(2, 2.6);     // well above
@@ -429,6 +449,7 @@ export function drumVoiceInstrument(base: ZzFXSound, voice: DrumVoice): ZzFXSoun
       scale(18, 0.35);
       scale(13, 1.5, 1);
       scale(0, 0.6);     // sits back in the mix
+      capCrush(0.02);    // a hat is nothing but high frequencies
       break;
   }
   return p;
