@@ -5,6 +5,40 @@
 > Branch: claude/tracker-note-entry-def3a5
 > PR: https://github.com/thejustinwalsh/zzfx-studio/pull/7
 
+### 4a4938dbc1829ae41f539236ed96ff28c158ec36
+fix: the kick drops with pitchJump, because slide cannot stop falling
+The foundational reason every previous attempt bubbled, from the ZzFX source
+rather than from tuning:
+
+  slide is `frequency += slide` on every sample, with no floor. It always
+  reaches zero and keeps going, and a negative frequency is heard as rising
+  pitch. Any pitched waveform driven by slide bubbles eventually -- steeper
+  merely bubbles sooner. Capping it, scaling it, flooring it: all of those were
+  choosing when the bubble happens, not whether.
+
+  shape 4 is sin(t**3), whose phase accelerates without bound. It has no stable
+  pitch, which is exactly why it reads as noise, and why the shipped drums never
+  bubbled: a zero crossing is inaudible when there is no pitch to hear. It also
+  means shape 4 can never be a low sound -- lowering it moves the runaway inside
+  the note and it sweeps upward instead.
+
+  pitchJump is `frequency += pitchJump` once, at pitchJumpTime. It is the only
+  bounded pitch move in the parameter set.
+
+So the kick is a sine with no slide at all and a single early downward step, a
+quarter of its own frequency. A fraction rather than a fixed number of hertz
+because the drum range shifts the kick between about 0.53x and 0.71x, and a
+step big enough to matter at the top would drive the bottom through zero.
+
+The test asserts the arithmetic rather than measuring the output: at the lowest
+note of every archetype, frequency plus step stays above zero. That rules the
+crossing out by construction instead of hoping a metric catches it -- and my
+metrics could not, which is the other half of why this took so long. A 256
+sample window resolves 86Hz, so it was measuring an 86Hz kick with an 86Hz
+ruler and reporting its own quantisation as rebounds.
+Files: apps/zzfx-studio/src/engine/instruments.ts, apps/zzfx-studio/test/drums.test.ts
+Stats: 2 files changed, 66 insertions(+), 31 deletions(-)
+
 ### 79fc2aeec82d0e21b830f39f487615076b0310ab
 fix: the generator may only put effects on drums that survive one
 Measured every effect against every voice and every archetype, over the
