@@ -5,6 +5,7 @@
   "main": "index",
   "scripts": {
     "start": "expo start",
+    "prestart": "pnpm run build:worker",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
