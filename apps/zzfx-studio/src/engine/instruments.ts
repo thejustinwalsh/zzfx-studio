@@ -382,3 +382,96 @@ export function generateInstruments(vibe: VibeName): ZzFXSound[] {
  * Each voice now gets its own shape and envelope. The note value still sets
  * pitch within the voice's range, so nudging a drum in the tracker still works.
  */
+export type DrumVoice = 'KICK' | 'SNARE' | 'HAT';
+
+/**
+ * How far the kick's pitch steps down, as a fraction of its own frequency, and
+ * how soon.
+ *
+ * A fraction rather than a fixed number of hertz so the step scales with the
+ * archetype and with the note: the drum range shifts the kick between about
+ * 0.53x and 0.71x, and a step large enough to matter at the top would drive
+ * the bottom through zero. A quarter always leaves it clear.
+ */
+const KICK_DROP = 0.25;
+const KICK_DROP_AT = 0.012;
+
+export function drumVoiceInstrument(base: ZzFXSound, voice: DrumVoice): ZzFXSound {
+  // Assigning past the end of a short array leaves holes, and ZzFX reads those
+  // as undefined rather than 0. Pad to the full parameter count first.
+  const p = [...base];
+  while (p.length < 20) p.push(0);
+
+  const scale = (i: number, by: number, cap = Infinity) =>
+    { p[i] = Math.min(cap, (base[i] ?? 0) * by); };
+
+  /**
+   * Ceiling on the archetype's own bit crush, per voice.
+   *
+   * ZzFX's bitCrush is a sample-and-hold: it recomputes one sample in every
+   * `bitCrush * 100`, so it is really an effective-sample-rate control, and its
+   * damage is entirely relative to pitch -- harmless on a 100Hz kick, fatal to
+   * an 11kHz hat. The `crushed` archetype carries 1.5, which holds 150 samples:
+   * a 294Hz effective rate that annihilates anything above ~150Hz. Its hat
+   * measured a seventh of every other archetype's, with its pitch collapsed.
+   *
+   * The hold is a whole number of samples, so the steps are coarse: 1 is no
+   * crushing, 2 is 22kHz, 3 is 14.7kHz. There is no setting that audibly
+   * crushes an 11kHz hat without halving its pitch -- measured, hold 2 already
+   * takes it from 11.3kHz to 5.1kHz. So the pitched-noise voices are held at
+   * the gentlest step that still does anything, and the crushed archetype
+   * keeps its character through its other parameters instead.
+   */
+  const capCrush = (max: number) => { p[15] = Math.min(p[15] ?? 0, max); };
+
+  switch (voice) {
+    case 'KICK':
+      // The one voice that cannot be noise, built the only way ZzFX allows.
+      //
+      // Three facts from the ZzFX source rather than from taste:
+      //
+      //   shape 4 is sin(t**3), whose phase accelerates without bound. It has
+      //   no stable pitch -- that is precisely why it reads as noise, and why
+      //   the shipped drums never bubbled: a zero crossing is inaudible when
+      //   there is no pitch to hear. It also means shape 4 can never be a low
+      //   sound. Lowering it moves the runaway inside the note and it sweeps
+      //   upward instead, ending as bright as the hat.
+      //
+      //   slide is `frequency += slide` on every sample, with no floor. It
+      //   always reaches zero and keeps going, and a negative frequency is
+      //   heard as rising pitch. Any pitched waveform driven by slide bubbles
+      //   eventually; steeper only bubbles sooner. Capping, scaling and
+      //   flooring it were all choosing when, never whether.
+      //
+      //   pitchJump is `frequency += pitchJump` once, at pitchJumpTime. It is
+      //   the only bounded pitch move in the parameter set.
+      //
+      // So: a sine body, no slide at all, and one early downward step -- which
+      // is what a kick's pitch envelope is anyway. The step is a fraction of
+      // the kick's own frequency, so it cannot reach zero at any note in the
+      // drum range or on any archetype.
+      p[6] = 0;
+      scale(2, 0.55);
+      p[8] = 0;
+      p[10] = -KICK_DROP * p[2];
+      p[11] = KICK_DROP_AT;
+      scale(0, 1.1, 1);
+      break;
+    case 'SNARE':
+      // The reference point: the archetype as written, with a touch more
+      // rattle. Moving it would only push the other two around.
+      scale(13, 1.25, 1);
+      capCrush(0.02);    // the gentlest crush that is not simply off
+      break;
+    case 'HAT':
+      scale(2, 2.6);     // well above
+      scale(4, 0.4);
+      scale(5, 0.35);    // and gone almost immediately
+      scale(18, 0.35);
+      scale(13, 1.5, 1);
+      scale(0, 0.6);     // sits back in the mix
+      capCrush(0.02);    // a hat is nothing but high frequencies
+      break;
+  }
+  return p;
+}

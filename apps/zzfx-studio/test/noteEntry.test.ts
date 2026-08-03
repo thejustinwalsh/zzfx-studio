@@ -3,16 +3,14 @@ import assert from 'node:assert/strict';
 
 import * as noteEntryMod from '../src/engine/noteEntry';
 import * as scalesMod from '../src/engine/scales';
-import * as instrumentsMod from '../src/engine/instruments';
-import * as typesMod from '../src/engine/types';
 import * as chordsMod from '../src/engine/chords';
+import * as typesMod from '../src/engine/types';
 
 // tsx transpiles to CJS interop, so named exports land under `default`.
 const ne = (noteEntryMod as any).default ?? noteEntryMod;
 const scales = (scalesMod as any).default ?? scalesMod;
-const instruments = (instrumentsMod as any).default ?? instrumentsMod;
-const types = (typesMod as any).default ?? typesMod;
 const chords = (chordsMod as any).default ?? chordsMod;
+const types = (typesMod as any).default ?? typesMod;
 
 const KEYS = scales.CHROMATIC;
 const SCALE_NAMES = Object.keys(scales.SCALES);
@@ -276,6 +274,3 @@ test('regression: bass voicings never encode to the rest sentinel', () => {
   }
   assert.deepEqual(offenders, []);
 });
-
-
-
