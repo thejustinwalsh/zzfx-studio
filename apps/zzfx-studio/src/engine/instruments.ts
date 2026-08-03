@@ -384,6 +384,17 @@ export function generateInstruments(vibe: VibeName): ZzFXSound[] {
  */
 export type DrumVoice = 'KICK' | 'SNARE' | 'HAT';
 
+/**
+ * Steepest downward sweep a sine kick tolerates.
+ *
+ * Past this the frequency reaches zero before the note ends and climbs back up
+ * the other side, heard as a bubble rather than a thud. A ratio of the
+ * archetype's own slide is not enough on its own: a quarter of the crushed
+ * archetype's -12 is still -3, which rebounds once a pitch drop is stacked on
+ * top -- and stacking one is exactly what the generator does.
+ */
+const KICK_MAX_SLIDE = -2;
+
 export function drumVoiceInstrument(base: ZzFXSound, voice: DrumVoice): ZzFXSound {
   // Assigning past the end of a short array leaves holes, and ZzFX reads those
   // as undefined rather than 0. Pad to the full parameter count first.
@@ -429,10 +440,11 @@ export function drumVoiceInstrument(base: ZzFXSound, voice: DrumVoice): ZzFXSoun
       // however high it is set. Snare and hat stay noise; only this one moves.
       p[6] = 0;
       scale(2, 0.55);    // ~100Hz once the note shifts it down
-      // The archetype's own slide is four times too steep for a sine this low:
-      // it drives the frequency through zero and back up the other side, which
-      // is audibly a bubble. A quarter of it gives the drop without the rise.
-      scale(8, 0.25);
+      // The archetype's own slide is far too steep for a sine this low: it
+      // drives the frequency through zero and back up the other side. Scaled
+      // down and then capped outright, because the ratio alone still rebounds
+      // on the steepest archetypes.
+      p[8] = Math.max(KICK_MAX_SLIDE, Math.min(0, (base[8] ?? 0) * 0.25));
       scale(0, 1.1, 1);
       // Envelope untouched: a kick is a thud, and a stretched one is a wash.
       break;

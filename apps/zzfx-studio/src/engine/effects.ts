@@ -76,17 +76,42 @@ const FX_VALUES: Record<EffectCode, number> = {
 const DRUM_PD_VALUE = 0xA0;
 
 
+/** Which effects a vibe asks for on the drum channel. */
+export function vibeDrumEffects(vibe: VibeName): readonly EffectCode[] {
+  return VIBE_CHANNEL_FX[vibe][3];
+}
+
 /** The value a drum effect should use, where it differs from the default. */
 function drumFxValue(code: EffectCode): number {
   return code === 'PD' ? DRUM_PD_VALUE : FX_VALUES[code];
 }
+
+/**
+ * The only effects that survive being put on a drum.
+ *
+ * Measured on every voice against every archetype. The rest fail in ways
+ * specific to what a drum is:
+ *
+ *   BC  collapses the snare and the hat outright. It is a sample-and-hold, so
+ *       it is really an effective-sample-rate control, and both voices live
+ *       around 11kHz -- the gentlest setting that does anything at all already
+ *       halves them. It rebounds the boomy kick as well.
+ *   SU  rebounds the crushed kick; DT and ST rebound the boomy one. A rebound
+ *       is the frequency reaching zero and climbing back the other side, heard
+ *       as a bubble rather than a drum.
+ *
+ * The Launchpad's DRUMS layout uses this same list, one kit per quadrant, so
+ * what the pads can play and what the generator can write are one set of
+ * sounds rather than two that disagree.
+ */
+export const DRUM_FX_PALETTE: readonly EffectCode[] = ['PD', 'SD', 'VB', 'TR'];
 
 // Which effects each logical channel can use
 const CHANNEL_FX_POOLS: EffectCode[][] = [
   ['SU', 'SD', 'VB', 'DT', 'ST', 'PD'], // Lead — full expression palette
   ['VB', 'DT', 'ST'],                     // Harmony — subtle, don't compete
   ['SD', 'ST', 'PD'],                     // Bass — grounded
-  ['PD', 'BC'],                            // Drums — punch kicks, crunch snares
+  [...DRUM_FX_PALETTE],                   // Drums — only what survives one
 ];
 
 // Per-vibe: which effect does each channel favor?
@@ -103,7 +128,7 @@ const VIBE_CHANNEL_FX: Record<VibeName, EffectCode[][]> = {
     ['ST', 'PD'],  // lead: staccato punch, pitch drops for aggression
     ['ST'],        // harmony: staccato for rhythmic drive
     ['ST', 'PD'],  // bass: staccato hits, pitch drops on roots
-    ['PD', 'BC'],  // drums: punchy kicks + crunchy snares
+    ['PD', 'TR'],  // drums: punchy kicks + rattling snares
   ],
   dungeon: [
     ['VB', 'SD'],  // lead: eerie vibrato, downward slides
@@ -121,7 +146,7 @@ const VIBE_CHANNEL_FX: Record<VibeName, EffectCode[][]> = {
     ['ST', 'SU'],  // lead: staccato punch, aggressive slide-ups
     ['DT', 'ST'],  // harmony: duty cycle grit, staccato punch
     ['ST', 'PD'],  // bass: staccato hits, pitch drops on roots
-    ['PD', 'BC'],  // drums: heavy kick punch + crushed snares
+    ['PD', 'TR'],  // drums: heavy kick punch + rattling snares
   ],
 };
 
@@ -171,13 +196,11 @@ export function drumEffectTarget(code: EffectCode): 'kicks' | 'snares' {
 
 const DRUM_EFFECT_TARGETS: Record<EffectCode, 'kicks' | 'snares'> = {
   PD: 'kicks',   // pitch drop punches kicks
-  // Bit crush is a sample-and-hold, so it is really an effective-sample-rate
-  // control and its damage is proportional to pitch. Aimed at snares it was
-  // aliasing an 11kHz voice down to about 1kHz -- not a crunchy snare, a
-  // different and much quieter instrument. The kick is low enough to survive
-  // it, and a crushed kick is the sound this was reaching for anyway.
-  BC: 'kicks',
-  SU: 'kicks', SD: 'kicks', VB: 'kicks', DT: 'kicks', ST: 'kicks', TR: 'kicks', // unused but typed
+  SD: 'kicks',   // slide-down deepens them
+  VB: 'snares',  // vibrato rattles a snare
+  TR: 'snares',  // tremolo likewise
+  BC: 'kicks',   // outside the drum palette; kept so the record is exhaustive
+  SU: 'kicks', DT: 'kicks', ST: 'kicks', // also outside the palette
 };
 
 function classifyPositions(notes: number[]): Record<PositionType, number[]> {

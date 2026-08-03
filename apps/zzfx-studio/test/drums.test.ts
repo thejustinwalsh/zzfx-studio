@@ -4,6 +4,7 @@ import { ZZFX } from 'zzfx';
 
 import * as instMod from '../src/engine/instruments';
 import * as fxMod from '../src/engine/effects';
+import type { NoteEffect } from '../src/engine/types';
 const instruments = (instMod as any).default ?? instMod;
 const effects = (fxMod as any).default ?? fxMod;
 
@@ -33,15 +34,28 @@ function tonality(x: number[], N = 1024): number {
   return Math.max(...mag) / (total / mag.length);
 }
 
-/** Zero-crossing rate per window — a cheap read on how pitch moves over time. */
+/**
+ * How pitch moves over time, across the part of the sound you can actually hear.
+ *
+ * Zero-crossing rate per window, with everything below -20dB of the peak
+ * dropped. That tail matters: at 86Hz a window holds one crossing, so a single
+ * stray crossing in a decayed tail reads as a 43Hz "climb" -- which is how this
+ * measure kept reporting bubbles at -30dB, where nothing is audible at all.
+ */
 function pitchTrack(x: number[], win = 512): number[] {
-  const out: number[] = [];
+  const rows: { hz: number; rms: number }[] = [];
+  let peak = 0;
   for (let s = 0; s + win < x.length; s += win) {
-    let z = 0;
-    for (let i = s + 1; i < s + win; i++) if ((x[i - 1] < 0) !== (x[i] < 0)) z++;
-    out.push(Math.round((z * 44100) / (2 * win)));
+    let z = 0, energy = 0;
+    for (let i = s + 1; i < s + win; i++) {
+      if ((x[i - 1] < 0) !== (x[i] < 0)) z++;
+      energy += x[i] * x[i];
+    }
+    const rms = Math.sqrt(energy / win);
+    peak = Math.max(peak, rms);
+    rows.push({ hz: Math.round((z * 44100) / (2 * win)), rms });
   }
-  return out;
+  return rows.filter((r) => r.rms >= peak * 0.1).map((r) => r.hz);
 }
 
 const decaySamples = (x: number[]) => {
@@ -87,28 +101,54 @@ test('the noise voices stay broadband', () => {
   }
 });
 
-test('no drum sweeps upward — that is what a bubble is', () => {
-  // The real discriminator, and the one tonality could not see. A low sine that
+test('no drum sweeps upward, with or without an effect on it', () => {
+  // The real discriminator, and the one tonality could not see: a low sine that
   // falls is a thud; the same sine driven through zero climbs back up the other
-  // side and sounds like a bubble. Shape 4 lowered too far does the same thing
-  // by a different route. Neither may rise.
-  for (const [aname, base] of Object.entries(ARCHETYPES)) {
+  // side and sounds like a bubble.
+  //
+  // Effects are included because that is how the generator plays these. The
+  // previous version of this test checked the bare voice only, and missed the
+  // crushed archetype's kick bubbling once a pitch drop was stacked on it --
+  // its slide is -12, and even a quarter of that still climbed by the tail.
+  // The palette, not an arbitrary list: those are the only effects that can
+  // reach a drum, from the generator or from the pads.
+  const FX_CASES: [string, NoteEffect | null][] = [
+    ['raw', null],
+    ...effects.DRUM_FX_PALETTE.flatMap((code: string) =>
+      [0x40, 0x80, 0xc0].map((value) => [`${code} 0x${value.toString(16)}`, { code, value }] as [string, NoteEffect])
+    ),
+  ];
+  for (const [aname, base] of Object.entries(ARCHETYPES_ALL)) {
     for (const v of VOICES) {
-      const t = pitchTrack(render(base, v, NOTE[v]));
-      // Trend, not a single excursion: the measure is coarse enough to jitter
-      // by one bin, and a falling contour with jitter is still a thud. A bubble
-      // climbs and keeps climbing.
-      const half = Math.floor(t.length / 2);
-      const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / Math.max(1, a.length);
-      const early = mean(t.slice(0, half));
-      const late = mean(t.slice(half));
-      assert.ok(
-        late <= early * 1.2 + 20,
-        `${aname} ${v} rises from ${early.toFixed(0)}Hz to ${late.toFixed(0)}Hz — [${t.slice(0, 8).join(' ')}]`
-      );
+      for (const [fname, fx] of FX_CASES) {
+        let p = instruments.drumVoiceInstrument(base, v);
+        if (fx) p = effects.applyEffect(p, fx);
+        p = [...p];
+        p[2] *= 2 ** ((NOTE[v] - 12) / 12);
+        const t = pitchTrack(ZZFX.buildSamples(...p));
+        if (t.length < 4) continue;
+        // A bubble has a shape: fall to a floor, then climb back off it. That
+        // is what the frequency crossing zero and coming up the other side
+        // looks like. Measuring the ends instead was useless -- an absolute
+        // tolerance that catches an 86Hz kick is noise on an 11kHz hat, and one
+        // loose enough for the hat lets the kick through.
+        const floorAt = t.indexOf(Math.min(...t));
+        const after = t.slice(floorAt + 1);
+        const rebound = after.length ? Math.max(...after) - t[floorAt] : 0;
+        // One zero-crossing in a 512-sample window is 43Hz, so that is the
+        // measurement's own quantum and a single-quantum wobble means nothing.
+        // A real rebound is the frequency having reached zero and come back:
+        // the pre-cap crushed kick moved two quanta, 0Hz to 86Hz.
+        const QUANTUM = 43;
+        assert.ok(
+          rebound <= Math.max(QUANTUM, t[0] * 0.4),
+          `${aname} ${v} ${fname} falls to ${t[floorAt]}Hz then climbs ${rebound}Hz — [${t.slice(0, 10).join(' ')}]`
+        );
+      }
     }
   }
 });
+
 
 test('the kick is the low one, by a wide margin', () => {
   // Measured on the sound, not the parameter: a shape-4 drum at a low base
@@ -209,9 +249,24 @@ test('no archetype leaves a voice inaudible', () => {
   }
 });
 
-test('bit crush is aimed at the voice that can take it', () => {
-  // It is a sample-and-hold, so its damage is proportional to pitch: on an
-  // 11kHz snare it aliased down to ~1kHz. The kick is low enough to survive it.
-  assert.equal(effects.drumEffectTarget('BC'), 'kicks', 'crush must not be aimed at snares');
-  assert.equal(effects.drumEffectTarget('PD'), 'kicks');
+test('bit crush never reaches a drum at all', () => {
+  // It is a sample-and-hold, so its damage is proportional to pitch: an 11kHz
+  // snare or hat aliases down to about 1kHz at the gentlest usable setting, and
+  // the boomy kick rebounds. There is no drum it is safe on.
+  assert.equal(effects.DRUM_FX_PALETTE.includes('BC'), false);
+});
+
+test('the generator only writes effects a drum survives', () => {
+  // Measured, not assumed: BC collapses the snare and hat and rebounds the
+  // boomy kick; SU rebounds the crushed kick; DT and ST rebound the boomy one.
+  // Anything the generator can put on the drum channel has to be in the
+  // palette, including whatever a vibe asks for.
+  const palette = new Set(effects.DRUM_FX_PALETTE);
+  assert.deepEqual([...palette].sort(), ['PD', 'SD', 'TR', 'VB']);
+
+  for (const vibe of ['adventure', 'battle', 'dungeon', 'titleScreen', 'boss'] as const) {
+    for (const code of effects.vibeDrumEffects(vibe)) {
+      assert.ok(palette.has(code), `${vibe} asks for ${code} on drums, which is not in the palette`);
+    }
+  }
 });
