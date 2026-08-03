@@ -5,6 +5,38 @@
 > Branch: claude/tracker-note-entry-def3a5
 > PR: https://github.com/thejustinwalsh/zzfx-studio/pull/7
 
+### ead46031129b0fc6f517fd5cb3c182120f2fc893
+fix: bit crush was destroying the voices it was aimed at
+ZzFX's bitCrush is a sample-and-hold -- one sample recomputed in every
+bitCrush*100 -- so it is really an effective-sample-rate control, and its damage
+is proportional to pitch. Harmless on a low kick, fatal to a hat, which is
+nothing but high frequencies.
+
+Two consequences, both measured.
+
+The generator aimed it at snares: BC: 'snares' in DRUM_EFFECT_TARGETS. At the
+shipped value that is a 4.9kHz effective rate, aliasing an 11kHz snare down to
+about 1kHz -- not a crunchy snare, a different and much quieter instrument. It
+aims at kicks now, which are low enough to take it, and a crushed kick is the
+sound this was reaching for anyway.
+
+The crushed archetype carries bitCrush 1.5, a 294Hz effective rate. Its hat
+rendered at 0.14x the level of every other archetype's with its pitch
+collapsed: one kit in five was broken, which is what "some variants are really
+quiet" was. The pitched-noise voices now cap it.
+
+The cap is deliberately at the gentlest step rather than something chosen for
+tone. The hold is a whole number of samples, so the ladder is coarse -- 1 is no
+crushing at all, 2 is 22kHz, 3 is 14.7kHz -- and measured, hold 2 already takes
+a hat from 11.3kHz down to 5.1kHz. There is no value that audibly crushes these
+voices without halving their pitch, so the crushed archetype keeps its
+character through its other parameters instead.
+
+Crushed hat goes from 0.14x to 0.52x, in line with the 0.59-0.61x the others
+sit at. Both new tests fail against the previous behaviour.
+Files: apps/zzfx-studio/src/engine/effects.ts, apps/zzfx-studio/src/engine/instruments.ts, apps/zzfx-studio/test/drums.test.ts
+Stats: 3 files changed, 72 insertions(+), 3 deletions(-)
+
 ### c82803ab3ea5e8ab8267bd685787ed301142ba6e
 fix: the kick gets a sine body, because noise cannot be low
 Reading ZzFX rather than guessing again: shape 4 is Math.sin(t**3) where t
