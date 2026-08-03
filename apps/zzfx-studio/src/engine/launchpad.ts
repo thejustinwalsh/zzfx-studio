@@ -395,97 +395,113 @@ export function buildKeysLayout(
 }
 
 /**
- * DRUMS — the kit the generator actually writes, not every pitch it could.
+ * DRUMS — four kits, one per quadrant, differing by effect.
  *
- * The previous layout gave one pad per note value: 6 kicks, 16 snares and 26
- * hi-hats, distinguished only by pitch. That is not a kit — nobody needs
- * twenty-six hi-hats a semitone apart, and none of those pads corresponds to a
- * sound you hear in a generated song.
+ *   ┌───────────────┬───────────────┐
+ *   │  PD  punch    │  SD  deepen   │   rows 5-8
+ *   ├───────────────┼───────────────┤
+ *   │  raw          │  VB  rattle   │   rows 1-4
+ *   └───────────────┴───────────────┘
+ *     cols 1-4         cols 5-8
  *
- * The generator only ever puts two effects on drums — `CHANNEL_FX_POOLS[3]` is
- * `['PD', 'BC']`, "punch kicks, crunch snares" — at fixed values. So each voice
- * gets its raw form plus those, and a pad plays something you already recognise
- * from your own songs rather than something invented for the hardware.
+ * Every quadrant holds the same three voices, one per row bottom to top: kick,
+ * snare, hat. The four columns step through each voice's own note range, so
+ * they are real pitch variation rather than four copies of one sound.
  *
- *        col 1   col 2      col 3      col 4
- *  HAT   raw     PD 0x60    PD 0xA0    ST 0xA0   (choked)
- *  SNR   raw     PD 0x60    PD 0xA0    ST 0x80   (tightened)
- *  KCK   raw     PD 0x60    PD 0xA0    BC 0x18   (crushed)
- *
- * Voices run upward so higher on the grid is higher in pitch, as everywhere
- * else. The effect travels with the pad, so recording one writes both the note
- * and its effect into the grid — the tracker's own data model, not a special
- * case for the device.
+ * The effects are DRUM_FX_PALETTE, the same list the song generator draws on,
+ * and for the same reason: measured, they are the only ones safe on all three
+ * voices across every archetype. Bit crush is absent because it collapses a
+ * snare or a hat outright -- which is what made an earlier version of this kit
+ * change shape under your fingers.
  */
 export interface DrumVariant {
-  /** Canonical ZzFXM note for the voice; picks the instrument at render time. */
+  /** ZzFXM note; picks both the voice and its pitch within that voice. */
   note: number;
   effect: NoteEffect | null;
-  /** Shown in the UI, and what the grid will read back. */
+  /** Shown in the UI, and what the grid reads back. */
   label: string;
 }
 
 /** Voices bottom to top, matching the grid's own low-to-high convention. */
-const DRUM_VOICE_NOTES = [DRUM_NOTES.KICK, DRUM_NOTES.SNARE, DRUM_NOTES.HAT] as const;
 const DRUM_VOICE_LABELS = ['KCK', 'SNR', 'HAT'] as const;
 
-/**
- * Raw, then the generator's own drum effects at its own values.
- *
- * PD appears twice because its value is the difference between a light thump
- * and the full drum-strength drop the generator uses (`DRUM_PD_VALUE`), and
- * both are musically useful. Effects do not stack — `applyEffect` takes one.
- */
-const DRUM_VARIANT_FX: readonly (readonly (NoteEffect | null)[])[] = [
-  // KICK — low enough that bit crush is grit rather than destruction.
-  [null, { code: 'PD', value: 0x60 }, { code: 'PD', value: 0xa0 }, { code: 'BC', value: 0x18 }],
-  // SNARE and HAT live around 11kHz, and bit crush is a sample-and-hold whose
-  // damage is proportional to pitch: the gentlest setting that does anything at
-  // all already halves them, so there is no crushed snare -- only a quieter and
-  // much lower one. They get a choke instead: a shorter envelope, which is a
-  // real articulation on both and safe at any frequency.
-  [null, { code: 'PD', value: 0x60 }, { code: 'PD', value: 0xa0 }, { code: 'ST', value: 0x80 }],
-  [null, { code: 'PD', value: 0x60 }, { code: 'PD', value: 0xa0 }, { code: 'ST', value: 0xa0 }],
+/** Each voice's playable span, mirroring DRUM_RANGES in noteEntry. */
+const DRUM_VOICE_SPANS = [
+  { min: 1, max: 6 },
+  { min: 7, max: 22 },
+  { min: 23, max: 48 },
+] as const;
+
+/** One quadrant per entry; null is the plain kit. Order matches padChannel. */
+const DRUM_QUADRANT_FX: readonly (NoteEffect | null)[] = [
+  null,                          // bottom-left
+  { code: 'VB', value: 0x36 },   // bottom-right
+  { code: 'PD', value: 0xa0 },   // top-left
+  { code: 'SD', value: 0x60 },   // top-right
 ];
 
-export const DRUM_VARIANT_COLS = DRUM_VARIANT_FX[0].length;
-export const DRUM_VARIANT_ROWS = DRUM_VOICE_NOTES.length;
+export const DRUM_VARIANT_COLS = 4;
+export const DRUM_VARIANT_ROWS = DRUM_VOICE_LABELS.length;
 
-export const DRUM_VARIANTS: readonly DrumVariant[] = DRUM_VOICE_NOTES.flatMap((note, v) =>
-  DRUM_VARIANT_FX[v].map((effect) => ({
-    note,
-    effect,
-    label: effect
-      ? `${DRUM_VOICE_LABELS[v]} ${effect.code}${effect.value.toString(16).toUpperCase().padStart(2, '0')}`
-      : DRUM_VOICE_LABELS[v],
-  }))
+const QUADRANT_ORIGINS = [
+  { row: 1, col: 1 },
+  { row: 1, col: 5 },
+  { row: 5, col: 1 },
+  { row: 5, col: 5 },
+] as const;
+
+/** The pitch a column plays, stepping across the voice's own range. */
+function noteForColumn(voice: number, col: number): number {
+  const { min, max } = DRUM_VOICE_SPANS[voice];
+  const step = (max - min) / Math.max(1, DRUM_VARIANT_COLS - 1);
+  return Math.round(min + step * col);
+}
+
+const fxLabel = (fx: NoteEffect | null) =>
+  fx ? ` ${fx.code}${fx.value.toString(16).toUpperCase().padStart(2, '0')}` : '';
+
+export const DRUM_VARIANTS: readonly DrumVariant[] = DRUM_QUADRANT_FX.flatMap((effect) =>
+  DRUM_VOICE_LABELS.flatMap((label, v) =>
+    Array.from({ length: DRUM_VARIANT_COLS }, (_, c) => ({
+      note: noteForColumn(v, c),
+      effect,
+      label: `${label}${c > 0 ? String(c + 1) : ''}${fxLabel(effect)}`,
+    }))
+  )
 );
 
+const VARIANTS_PER_QUADRANT = DRUM_VARIANT_ROWS * DRUM_VARIANT_COLS;
+
 /**
- * Lay the kit into a grid, bottom-left of the given origin.
+ * Lay kits into the grid.
  *
- * Used twice: the DRUMS layout puts it at the bottom-left of the whole grid,
- * and KEYS puts it in the drum quadrant. Both show the same thing, so there is
- * one kit to learn rather than two.
+ * Used twice: DRUMS spreads all four over the surface, and KEYS fits the plain
+ * one into its drum quadrant, so a pad means the same thing in both.
  */
-function buildDrumTable(originRow: number, originCol: number): Int8Array {
+function buildDrumTable(
+  quadrants: readonly number[],
+  origins: readonly { row: number; col: number }[]
+): Int8Array {
   const table = new Int8Array(INDEX_LIMIT).fill(-1);
-  for (let v = 0; v < DRUM_VARIANT_ROWS; v++) {
-    for (let c = 0; c < DRUM_VARIANT_COLS; c++) {
-      const row = originRow + v;
-      const col = originCol + c;
-      if (row > GRID_SIZE || col > GRID_SIZE) continue;
-      table[padIndex(row, col)] = v * DRUM_VARIANT_COLS + c;
+  quadrants.forEach((q, i) => {
+    const origin = origins[i];
+    for (let v = 0; v < DRUM_VARIANT_ROWS; v++) {
+      for (let c = 0; c < DRUM_VARIANT_COLS; c++) {
+        const row = origin.row + v;
+        const col = origin.col + c;
+        if (row > GRID_SIZE || col > GRID_SIZE) continue;
+        table[padIndex(row, col)] = q * VARIANTS_PER_QUADRANT + v * DRUM_VARIANT_COLS + c;
+      }
     }
-  }
+  });
   return table;
 }
 
 /** Pad → index into DRUM_VARIANTS, or -1. Built once at load. */
-export const DRUMS_LAYOUT: Int8Array = buildDrumTable(1, 1);
+export const DRUMS_LAYOUT: Int8Array = buildDrumTable([0, 1, 2, 3], QUADRANT_ORIGINS);
 
-/** The same kit inside the KEYS drum quadrant (bottom-right). */
-export const KEYS_DRUM_LAYOUT: Int8Array = buildDrumTable(1, 5);
+/** KEYS has room for one kit only, so it gets the plain one. */
+export const KEYS_DRUM_LAYOUT: Int8Array = buildDrumTable([0], [{ row: 1, col: 5 }]);
 
 /** The variant a pad plays under a layout, or null where nothing is mapped. */
 export function drumVariantAt(index: number, table: Int8Array): DrumVariant | null {

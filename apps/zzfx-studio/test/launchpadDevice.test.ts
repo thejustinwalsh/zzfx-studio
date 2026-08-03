@@ -70,16 +70,17 @@ test('each quadrant reports its own channel', () => {
 });
 
 test('a drum pad carries its effect, not just its note', () => {
-  // The whole point of the kit: the pad plays a sound the generator writes, and
+  // The point of the kit: a pad plays a sound the generator can also write, and
   // recording it stores the note and the effect the grid already understands.
-  const raw = dev.decodeLaunchpad([0x90, lp.padIndex(1, 1), 64], DRUMS);
-  assert.equal(raw.channel, 3);
-  assert.equal(raw.note, lp.DRUM_VARIANTS[0].note);
-  assert.equal(raw.effect, null, 'column one is the raw voice');
+  const plain = dev.decodeLaunchpad([0x90, lp.padIndex(1, 1), 64], DRUMS);
+  assert.equal(plain.channel, 3);
+  assert.equal(plain.effect, null, 'the bottom-left quadrant is the plain kit');
 
-  const crunch = dev.decodeLaunchpad([0x90, lp.padIndex(1, 4), 64], DRUMS);
-  assert.deepEqual(crunch.effect, { code: 'BC', value: 0x18 });
-  assert.equal(crunch.note, raw.note, 'same voice, different treatment');
+  // Same voice and pitch, one quadrant to the right: an effect, same note.
+  const treated = dev.decodeLaunchpad([0x90, lp.padIndex(1, 5), 64], DRUMS);
+  assert.equal(treated.note, plain.note, 'same voice and pitch, different treatment');
+  assert.ok(treated.effect, 'the neighbouring quadrant applies one');
+  assert.notEqual(treated.effect.code, 'BC', 'never bit crush on a drum');
 });
 
 test('the drum quadrant in KEYS plays the kit, not scale degrees', () => {
@@ -390,14 +391,17 @@ test('the kit lights in both layouts, and only where it exists', () => {
       assert.notEqual(s.get(i), lp.OFF, `${layout}: kit pad ${i} was dark`);
       lit++;
     }
-    assert.equal(lit, 12, `${layout} should light twelve kit pads`);
+    // DRUMS spreads four kits over the grid; KEYS fits one in its quadrant.
+    assert.equal(lit, layout === 'DRUMS' ? 48 : 12, `${layout} lit ${lit} pads`);
   }
 });
 
-test('DRUMS leaves everything outside the kit dark', () => {
+test('DRUMS leaves the unused row of each quadrant dark', () => {
+  // Three voices in a four-row quadrant, so the top row of each is spare and
+  // must not light with nothing behind it.
   const s = new lp.LedSurface();
   dev.renderLaunchpad(s, baseState({ layout: 'DRUMS' }));
-  for (let row = 4; row <= 8; row++) {
+  for (const row of [4, 8]) {
     for (let col = 1; col <= 8; col++) {
       assert.equal(s.get(lp.padIndex(row, col)), lp.OFF, `pad ${row},${col} lit with nothing behind it`);
     }
