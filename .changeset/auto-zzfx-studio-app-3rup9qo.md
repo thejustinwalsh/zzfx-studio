@@ -5,6 +5,86 @@
 > Branch: claude/tracker-note-entry-def3a5
 > PR: https://github.com/thejustinwalsh/zzfx-studio/pull/7
 
+### 8b5533a8a84c80797b0f305a7ef306d7f3018b27
+fix: floor how short a drum voice can be
+The hat multiplies three envelope stages down (0.4 sustain, 0.35 release,
+0.35 decay), so a short archetype roll landed at 18ms and read as a click
+rather than a drum. Measured across 750 generated kits, 31% of battle hats
+and 28% of boss hats fell under 25ms audible; with the floor both are 0%.
+
+The floor scales the decaying stages up proportionally and only when a roll
+falls under the minimum, so rolls that were already long enough are untouched
+and kits still vary in length. Attack is excluded on purpose -- stretching it
+would soften the transient, which is the point of a hat.
+
+Kick and snare measured 65ms at their shortest and never clicked, so their
+floors bind nothing today. They are there so a later archetype or trait
+cannot reintroduce the problem silently.
+
+Note this is not a tempo bug, though it shows up most at speed: a ZzFX note
+runs attack + decay + sustain + release and none of it scales with BPM, so a
+voice that is too short is too short everywhere. There is a separate tempo
+issue -- above about 160 BPM the 1/16 row is shorter than the kick and snare,
+so zzfxMChannels cuts them with a 99-sample fade -- which lives in the
+playback loop and affects every channel, and is left alone here.
+Files: apps/zzfx-studio/src/engine/instruments.ts
+Stats: 1 file changed, 46 insertions(+)
+
+### cb5223028af70735a8531ea7b7322a0a857f6d1f
+feat: restore per-voice drums
+Reverts the revert. The drums were removed on bad evidence: the bundle the
+browser was running, public/render-worker.js, was a tracked build artifact
+two days stale, so every tuning pass after it landed in source and none of
+them reached the speakers. What kept bubbling was the Aug 1 build, whose
+kick was a sine with slide -14. The fix for that was already written and had
+simply never been audible.
+
+A drum note is now voiced by pitch -- kick, snare or hat -- rather than being
+the channel's instrument pitch-shifted, which is what made a "kick" at note 1
+and a "hat" at note 32 the same timbre at different speeds.
+
+The kick is the one voice that cannot be noise. shape 4 is sin(t**3), whose
+phase accelerates without bound; it has no stable pitch, which is exactly why
+it reads as noise and why it can never be low. So the kick is a sine, and its
+drop uses pitchJump, the only bounded pitch move ZzFX has. slide is pinned to
+0 precisely because it is unbounded -- frequency += slide runs forever, always
+reaches zero, and negative frequency reads as rising pitch. That is the bubble,
+and it is now unreachable: at every note the kick lands on a positive
+frequency and stays there.
+
+Snare and hat are relative scalings of whatever archetype was rolled, so kit
+variation survives instead of collapsing to one sound, and both cap bitCrush
+at 0.02 -- enough for grit, far from the sample-and-hold rate where aliasing
+folds a falling pitch into a rising one.
+Files: apps/zzfx-studio/src/engine/effects.ts, apps/zzfx-studio/src/engine/index.ts, apps/zzfx-studio/src/engine/instruments.ts, apps/zzfx-studio/src/engine/song.ts, apps/zzfx-studio/test/drums.test.ts, apps/zzfx-studio/test/noteEntry.test.ts
+Stats: 6 files changed, 550 insertions(+), 58 deletions(-)
+
+### 6d286fb84ec6f2dcd9de8cca9171fa1dbe8a0b18
+fix: stop tracking the render worker bundle
+public/render-worker.js is an esbuild bundle of the whole audio engine --
+render-worker.ts imports renderSongBuffers, which pulls in song, effects,
+instruments and zzfx. It was committed alongside its source from the start,
+and its inputs changed across 15 commits while it was rebuilt in 4.
+
+Tracking a build output made git authoritative over it. preweb does rebuild
+it, but any checkout, merge or reset restored the committed blob on top of
+the fresh build. That is how a drum bug survived three correct reverts: the
+source was clean, the bundle on disk was two days old, and the app plays
+whatever the bundle says. Nothing throws, because the worker was not missing
+-- it was wrong, so it simply rendered different audio.
+
+Its sibling from the same preweb line, the workbox runtime, was already
+ignored. This gives the worker the same treatment and adds prestart, since
+start serves web but had no pre-script and the file is no longer committed
+for a fresh clone to fall back on.
+
+The ignore pattern is **/ prefixed deliberately: a pattern containing a
+slash anchors to the .gitignore's own directory, so the existing bare
+public/workbox-v* form matches only a repo-root public/ and never
+apps/zzfx-studio/public/. That line is still wrong and is left alone here.
+Files: .gitignore, apps/zzfx-studio/package.json, apps/zzfx-studio/public/render-worker.js
+Stats: 3 files changed, 16 insertions(+), 1 deletion(-)
+
 ### 4a4938dbc1829ae41f539236ed96ff28c158ec36
 fix: the kick drops with pitchJump, because slide cannot stop falling
 The foundational reason every previous attempt bubbled, from the ZzFX source
