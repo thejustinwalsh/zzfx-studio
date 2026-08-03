@@ -4,9 +4,11 @@ import { ZZFX } from 'zzfx';
 
 import * as instMod from '../src/engine/instruments';
 import * as fxMod from '../src/engine/effects';
+import * as songImport from '../src/engine/song';
 import type { NoteEffect } from '../src/engine/types';
 const instruments = (instMod as any).default ?? instMod;
 const effects = (fxMod as any).default ?? fxMod;
+const song_ = (songImport as any).default ?? songImport;
 
 const VOICES = ['KICK', 'SNARE', 'HAT'] as const;
 
@@ -267,6 +269,56 @@ test('the generator only writes effects a drum survives', () => {
   for (const vibe of ['adventure', 'battle', 'dungeon', 'titleScreen', 'boss'] as const) {
     for (const code of effects.vibeDrumEffects(vibe)) {
       assert.ok(palette.has(code), `${vibe} asks for ${code} on drums, which is not in the palette`);
+    }
+  }
+});
+
+test('every drum sound the generator emits renders cleanly', () => {
+  // The end-to-end guarantee, and the one that matters: not "is this effect
+  // safe in isolation" but "does anything the generator actually writes sound
+  // wrong on any archetype it might have picked". Effects are chosen per vibe
+  // and per role, so the only honest way to check is to generate and look.
+  const seen = new Map<string, { note: number; fx: NoteEffect | null }>();
+  for (const vibe of ['adventure', 'battle', 'dungeon', 'titleScreen', 'boss'] as const) {
+    for (let i = 0; i < 2; i++) {
+      const song = song_.generateSong({ vibe, key: 'C', scale: 'minor', bpm: 130, length: 'epic' });
+      for (const label of song.patternOrder) {
+        const notes = song.patterns[label][3];
+        const fxs = song.patternEffects?.[label]?.[3] ?? [];
+        for (let r = 0; r < 32; r++) {
+          const note = notes[r + 2];
+          if (!note || note <= 0) continue;
+          const fx = fxs[r] ?? null;
+          seen.set(`${note}:${fx ? fx.code + fx.value : 'raw'}`, { note, fx });
+        }
+      }
+    }
+  }
+  assert.ok(seen.size > 0, 'the generator wrote no drums at all');
+
+  const voiceOf = (n: number) => (n <= 6 ? 'KICK' : n <= 22 ? 'SNARE' : 'HAT') as const;
+  for (const [key, { note, fx }] of seen) {
+    if (fx) {
+      assert.ok(
+        effects.DRUM_FX_PALETTE.includes(fx.code),
+        `${key}: the generator wrote ${fx.code}, which is not in the drum palette`
+      );
+    }
+    // Every archetype, because generation picks one at random.
+    for (const [aname, base] of Object.entries(ARCHETYPES_ALL)) {
+      let p = instruments.drumVoiceInstrument(base, voiceOf(note));
+      if (fx) p = effects.applyEffect(p, fx);
+      p = [...p];
+      p[2] *= 2 ** ((note - 12) / 12);
+      const t = pitchTrack(ZZFX.buildSamples(...p));
+      assert.ok(t.length > 0, `${aname} ${key} is silent`);
+      const floorAt = t.indexOf(Math.min(...t));
+      const after = t.slice(floorAt + 1);
+      const rebound = after.length ? Math.max(...after) - t[floorAt] : 0;
+      assert.ok(
+        rebound <= Math.max(43, t[0] * 0.4),
+        `${aname} ${key} falls to ${t[floorAt]}Hz then climbs ${rebound}Hz`
+      );
     }
   }
 });
