@@ -5,6 +5,38 @@
 > Branch: claude/tracker-note-entry-def3a5
 > PR: https://github.com/thejustinwalsh/zzfx-studio/pull/7
 
+### c82803ab3ea5e8ab8267bd685787ed301142ba6e
+fix: the kick gets a sine body, because noise cannot be low
+Reading ZzFX rather than guessing again: shape 4 is Math.sin(t**3) where t
+accumulates every sample, so its instantaneous frequency runs away as t
+squared. A high base pitch hits that runaway immediately and sounds like steady
+bright noise, which is right for a snare or a hat. A low one hits it during the
+note and sweeps upward instead, ending as bright as the hat. Measured, the kick
+ran 4134Hz to 11714Hz across its length -- a rising whoosh, and audibly higher
+than the hat it should sit an octave under. Lowering a shape-4 drum does not
+make it low; it makes it sweep. Every attempt so far was fighting that.
+
+So the kick alone gets a sine body. A kick is pitched: noise has no pitch and
+therefore no audible low end, and ZzFX's noise term is scaled by frequency, so
+at 90Hz it contributes nothing however high it is set. Crushing does not help
+either -- a sine at that pitch measures 163 on peak-to-mean, and 54 with heavy
+bitcrush, against 3 for the archetype. There is no setting that is both low and
+broadband. Snare and hat stay exactly as they were.
+
+The archetype's own slide is four times too steep for a sine this low: it
+drives the frequency through zero and back up the other side, which is what
+made the first attempt a bubble. A quarter of it drops without rising. Pitch,
+envelope, level and slide all still come from the archetype, so the five still
+sound different from each other.
+
+Tonality was the wrong test and is why two bad kicks passed it. The
+discriminator is the pitch trend: a thud falls, a bubble climbs. The new test
+compares the first half of the pitch track against the second, and both
+rejected kicks fail it -- the shape-4 one also fails a new check that the kick
+actually measures lower than the hat, which it did not.
+Files: apps/zzfx-studio/src/engine/instruments.ts, apps/zzfx-studio/test/drums.test.ts
+Stats: 2 files changed, 74 insertions(+), 18 deletions(-)
+
 ### b0fb6c55385d8e584b2a8ec9c7339313d3ba754a
 fix: the kick is a low-end thud, not a wash
 Lengthening the tail was wrong. A low noise burst stretched to nearly twice the
