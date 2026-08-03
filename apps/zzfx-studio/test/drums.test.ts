@@ -299,7 +299,7 @@ test('every drum sound the generator emits renders cleanly', () => {
   }
   assert.ok(seen.size > 0, 'the generator wrote no drums at all');
 
-  const voiceOf = (n: number) => (n <= 6 ? 'KICK' : n <= 22 ? 'SNARE' : 'HAT') as const;
+  const voiceOf = (n: number): 'KICK' | 'SNARE' | 'HAT' => (n <= 6 ? 'KICK' : n <= 22 ? 'SNARE' : 'HAT');
   for (const [key, { note, fx }] of seen) {
     if (fx) {
       assert.ok(
