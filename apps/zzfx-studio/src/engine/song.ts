@@ -11,8 +11,7 @@ import {
   VibeName,
 } from './types';
 import { VIBE_CONFIG, getRandomBpm } from './vibes';
-import { generateInstruments, drumVoiceInstrument, drumVoiceOf } from './instruments';
-import type { DrumVoice } from './instruments';
+import { generateInstruments } from './instruments';
 import { generateDrumPattern } from './drums';
 import { generateBassPattern } from './bass';
 import { generateMelodyPattern } from './melody';
@@ -349,69 +348,65 @@ interface ExpandedSong {
   channelMap: number[]; // channelMap[physicalIdx] = logicalIdx (0-3)
 }
 
-const DRUM_CHANNEL = 3;
-
-/**
- * Identifies the instrument a note needs.
- *
- * A note wants a variant when it carries an effect, and — on the drum channel —
- * always, because kick, snare and hat are different instruments rather than
- * different pitches of one. Returns null when the channel's base instrument
- * will do.
- */
-function variantKeyFor(ch: number, note: number, fx: NoteEffect | null | undefined): string | null {
-  const voice = ch === DRUM_CHANNEL ? drumVoiceOf(note) : null;
-  if (!voice && !fx) return null;
-  return `${ch}_${voice ?? ''}_${fx ? `${fx.code}${fx.value}` : ''}`;
-}
-
 function expandSong(song: Song): ExpandedSong {
-  // Every note that needs its own instrument, collected across all patterns.
-  const variants = new Map<string, { logicalCh: number; voice: DrumVoice | null; effect: NoteEffect | null }>();
+  const hasEffects = song.patternEffects &&
+    Object.keys(song.patternEffects).length > 0;
 
-  for (const label of song.patternOrder) {
-    const pattern = song.patterns[label];
-    const effects = song.patternEffects?.[label];
-    for (let ch = 0; ch < 4; ch++) {
-      const channelData = pattern[ch];
-      if (!channelData) continue;
-      for (let row = 0; row < ROWS; row++) {
-        const note = channelData[row + 2];
-        if (note <= 0) continue;
-        const fx = effects?.[ch]?.[row] ?? null;
-        const key = variantKeyFor(ch, note, fx);
-        if (!key || variants.has(key)) continue;
-        variants.set(key, {
-          logicalCh: ch,
-          voice: ch === DRUM_CHANNEL ? drumVoiceOf(note) : null,
-          effect: fx,
-        });
-      }
+  // Fast path: no effects → return original format
+  if (!hasEffects) {
+    const patternArrays: number[][][] = [];
+    for (const label of song.patternOrder) {
+      patternArrays.push([...song.patterns[label]]);
     }
-  }
-
-  // Nothing needs a variant — the four logical channels render as they are.
-  if (variants.size === 0) {
     return {
       instruments: [...song.instruments],
-      patterns: song.patternOrder.map((label) => [...song.patterns[label]]),
+      patterns: patternArrays,
       sequence: song.sequence,
       bpm: song.config.bpm,
       channelMap: [0, 1, 2, 3],
     };
   }
 
-  const effectKeys = variants;
+  // Collect all unique effect keys across all patterns
+  // Key format: "${logicalCh}_${code}_${value}"
+  const effectKeys = new Map<string, { logicalCh: number; effect: NoteEffect }>();
+
+  for (const label of song.patternOrder) {
+    const effects = song.patternEffects[label];
+    if (!effects) continue;
+    for (let ch = 0; ch < 4; ch++) {
+      if (!effects[ch]) continue;
+      for (const fx of effects[ch]) {
+        if (!fx) continue;
+        const key = `${ch}_${fx.code}_${fx.value}`;
+        if (!effectKeys.has(key)) {
+          effectKeys.set(key, { logicalCh: ch, effect: fx });
+        }
+      }
+    }
+  }
+
+  // No effects found after scanning → fast path
+  if (effectKeys.size === 0) {
+    const patternArrays: number[][][] = [];
+    for (const label of song.patternOrder) {
+      patternArrays.push([...song.patterns[label]]);
+    }
+    return {
+      instruments: [...song.instruments],
+      patterns: patternArrays,
+      sequence: song.sequence,
+      bpm: song.config.bpm,
+      channelMap: [0, 1, 2, 3],
+    };
+  }
 
   // Build expanded instruments: base 4 + effect variants
   const expandedInstruments = song.instruments.map(i => [...i]);
   const effectInstMap = new Map<string, number>();
 
-  for (const [key, { logicalCh, voice, effect }] of effectKeys) {
-    // Voice first so the effect modifies the drum it is actually attached to.
-    let variant = [...song.instruments[logicalCh]];
-    if (voice) variant = drumVoiceInstrument(variant, voice);
-    if (effect) variant = applyEffect(variant, effect);
+  for (const [key, { logicalCh, effect }] of effectKeys) {
+    const variant = applyEffect([...song.instruments[logicalCh]], effect);
     effectInstMap.set(key, expandedInstruments.length);
     expandedInstruments.push(variant);
   }
@@ -454,10 +449,10 @@ function expandSong(song: Song): ExpandedSong {
         const note = channelData[row + 2];
         if (note <= 0) continue;
 
-        const fx = channelEffects?.[row] ?? null;
-        const key = variantKeyFor(ch, note, fx);
+        const fx = channelEffects?.[row];
 
-        if (key) {
+        if (fx) {
+          const key = `${ch}_${fx.code}_${fx.value}`;
           const physIdx = effectPhysMap.get(key)!;
           const instIdx = effectInstMap.get(key)!;
           physPattern[physIdx][0] = instIdx;

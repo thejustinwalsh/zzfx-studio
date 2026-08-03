@@ -45,8 +45,6 @@ import {
   codeToSong,
   baseOctaveFromFreq,
   DEFAULT_BASE_OCTAVE,
-  drumVoiceInstrument,
-  drumVoiceOf,
   applyEffect,
 } from './src/engine';
 import { shareCodeFromUrl, SHARE_PARAM, shouldShowMiniPlayer, loadShareCodec, prefetchShareCodec } from './src/engine/share';
@@ -753,14 +751,7 @@ function Studio() {
     const currentSong = useSongStore.getState().song;
     if (!currentSong || note <= 0) return;
     unlockAudio();
-    // The drum channel is three instruments, not three pitches of one: playback
-    // routes each note through drumVoiceInstrument before the pitch shift.
-    // Skipping that here played the base noise instrument instead, so KCK, SNR
-    // and HAT all sounded alike and none of them matched the song.
-    const base = currentSong.instruments[channelIndex];
-    const params = channelIndex === DRUM_CHANNEL
-      ? drumVoiceInstrument(base, drumVoiceOf(note))
-      : [...base];
+    const params = [...currentSong.instruments[channelIndex]];
     // Voice, then effect, then pitch — the order expandSong uses. Any other
     // order and the pad sounds unlike the note it just wrote.
     const withFx = effect ? applyEffect(params, effect) : params;

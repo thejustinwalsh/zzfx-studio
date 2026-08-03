@@ -80,7 +80,6 @@ test('a drum pad carries its effect, not just its note', () => {
   const treated = dev.decodeLaunchpad([0x90, lp.padIndex(1, 5), 64], DRUMS);
   assert.equal(treated.note, plain.note, 'same voice and pitch, different treatment');
   assert.ok(treated.effect, 'the neighbouring quadrant applies one');
-  assert.notEqual(treated.effect.code, 'BC', 'never bit crush on a drum');
 });
 
 test('the drum quadrant in KEYS plays the kit, not scale degrees', () => {

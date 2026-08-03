@@ -404,15 +404,12 @@ export function buildKeysLayout(
  *   └───────────────┴───────────────┘
  *     cols 1-4         cols 5-8
  *
- * Every quadrant holds the same three voices, one per row bottom to top: kick,
- * snare, hat. The four columns step through each voice's own note range, so
+ * Every quadrant holds the same three drums, one per row bottom to top: kick,
+ * snare, hat. The four columns step through each drum's own note range, so
  * they are real pitch variation rather than four copies of one sound.
  *
- * The effects are DRUM_FX_PALETTE, the same list the song generator draws on,
- * and for the same reason: measured, they are the only ones safe on all three
- * voices across every archetype. Bit crush is absent because it collapses a
- * snare or a hat outright -- which is what made an earlier version of this kit
- * change shape under your fingers.
+ * The effects are the ones the song generator puts on drums -- pitch drop and
+ * bit crush -- so a pad plays a sound a generated song can also contain.
  */
 export interface DrumVariant {
   /** ZzFXM note; picks both the voice and its pitch within that voice. */
@@ -435,9 +432,9 @@ const DRUM_VOICE_SPANS = [
 /** One quadrant per entry; null is the plain kit. Order matches padChannel. */
 const DRUM_QUADRANT_FX: readonly (NoteEffect | null)[] = [
   null,                          // bottom-left
-  { code: 'VB', value: 0x36 },   // bottom-right
+  { code: 'PD', value: 0x60 },   // bottom-right
   { code: 'PD', value: 0xa0 },   // top-left
-  { code: 'SD', value: 0x60 },   // top-right
+  { code: 'BC', value: 0x18 },   // top-right
 ];
 
 export const DRUM_VARIANT_COLS = 4;

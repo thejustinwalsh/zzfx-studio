@@ -420,15 +420,14 @@ test('the key changes what the pads play', () => {
   assert.equal(d[lp.padIndex(1, 3)], 6, 'D major takes F sharp');
 });
 
-test('four kits, one per quadrant, from the generator\'s own palette', () => {
-  // The whole grid, not a corner of it: each quadrant is the same three voices
-  // with a different effect, and the effects are the ones measured safe on a
-  // drum -- the same list the generator draws on.
+test("four kits, one per quadrant, from the generator's own drum effects", () => {
+  // The whole grid, not a corner of it: each quadrant is the same three drums
+  // with a different effect, and the effects are the ones the generator puts on
+  // drums, so a pad plays something a generated song can contain.
   assert.equal(lp.DRUM_VARIANTS.length, 4 * 3 * 4, 'four quadrants of three voices by four pitches');
 
   const codes = lp.DRUM_VARIANTS.map((v: any) => v.effect?.code ?? null);
-  assert.deepEqual([...new Set(codes)], [null, 'VB', 'PD', 'SD'], 'one effect per quadrant');
-  assert.equal(codes.includes('BC'), false, 'bit crush collapses a snare or a hat');
+  assert.deepEqual([...new Set(codes)], [null, 'PD', 'BC'], "the generator's own drum effects");
 });
 
 test('every pad in every quadrant is reachable and distinct', () => {

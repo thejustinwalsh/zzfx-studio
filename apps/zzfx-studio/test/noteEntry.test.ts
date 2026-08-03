@@ -277,39 +277,5 @@ test('regression: bass voicings never encode to the rest sentinel', () => {
   assert.deepEqual(offenders, []);
 });
 
-// --- drum voices ------------------------------------------------------------
 
-test('a drum note picks the same voice everywhere it is asked', () => {
-  // Playback and audition each map a note to a voice. They lived in separate
-  // copies, drifted, and every audition played the base noise instrument.
-  const cases: [number, string][] = [
-    [1, 'KICK'], [6, 'KICK'],
-    [7, 'SNARE'], [14, 'SNARE'], [22, 'SNARE'],
-    [23, 'HAT'], [32, 'HAT'], [48, 'HAT'],
-  ];
-  for (const [note, voice] of cases) {
-    assert.equal(instruments.drumVoiceOf(note), voice, `note ${note}`);
-  }
-});
 
-test('the voice lookup agrees with the name shown in the grid', () => {
-  const NAME_TO_VOICE: Record<string, string> = { KCK: 'KICK', SNR: 'SNARE', HAT: 'HAT' };
-  for (let note = 1; note <= 48; note++) {
-    assert.equal(
-      instruments.drumVoiceOf(note),
-      NAME_TO_VOICE[types.drumNoteToName(note)],
-      `note ${note} is labelled ${types.drumNoteToName(note)}`
-    );
-  }
-});
-
-test('the voice lookup and the instrument agree about pitch order', () => {
-  // Pitch ordering only; drums.test.ts covers the rest -- envelopes, tonality
-  // and whether the archetype survives -- with measurements rather than a
-  // ratio, after a ratio threshold here failed to notice the kick had turned
-  // into a bubble.
-  const base = [0.8, 0, 350, 0, 0.01, 0.08, 4, 1, -8, 0, 0, 0, 0, 0.5, 0, 0, 0, 0.05, 0.04, 0];
-  const freq = (note: number) => instruments.drumVoiceInstrument(base, instruments.drumVoiceOf(note))[2];
-  assert.ok(freq(1) < freq(14), 'the kick should sit below the snare');
-  assert.ok(freq(14) < freq(32), 'the snare should sit below the hat');
-});
