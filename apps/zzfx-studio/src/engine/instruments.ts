@@ -385,15 +385,16 @@ export function generateInstruments(vibe: VibeName): ZzFXSound[] {
 export type DrumVoice = 'KICK' | 'SNARE' | 'HAT';
 
 /**
- * Steepest downward sweep a sine kick tolerates.
+ * How far the kick's pitch steps down, as a fraction of its own frequency, and
+ * how soon.
  *
- * Past this the frequency reaches zero before the note ends and climbs back up
- * the other side, heard as a bubble rather than a thud. A ratio of the
- * archetype's own slide is not enough on its own: a quarter of the crushed
- * archetype's -12 is still -3, which rebounds once a pitch drop is stacked on
- * top -- and stacking one is exactly what the generator does.
+ * A fraction rather than a fixed number of hertz so the step scales with the
+ * archetype and with the note: the drum range shifts the kick between about
+ * 0.53x and 0.71x, and a step large enough to matter at the top would drive
+ * the bottom through zero. A quarter always leaves it clear.
  */
-const KICK_MAX_SLIDE = -2;
+const KICK_DROP = 0.25;
+const KICK_DROP_AT = 0.012;
 
 export function drumVoiceInstrument(base: ZzFXSound, voice: DrumVoice): ZzFXSound {
   // Assigning past the end of a short array leaves holes, and ZzFX reads those
@@ -425,28 +426,36 @@ export function drumVoiceInstrument(base: ZzFXSound, voice: DrumVoice): ZzFXSoun
 
   switch (voice) {
     case 'KICK':
-      // The one voice that cannot be made of noise.
+      // The one voice that cannot be noise, built the only way ZzFX allows.
       //
-      // Shape 4 is sin(t**3), whose instantaneous frequency runs away as t
-      // squared. A high base pitch reaches that runaway immediately and just
-      // sounds like steady bright noise -- fine for a snare or a hat. A low one
-      // reaches it *during* the note, so it sweeps upward and ends as bright as
-      // the hat: a rising whoosh, not a thud. Lowering a shape-4 drum does not
-      // make it low, it makes it sweep.
+      // Three facts from the ZzFX source rather than from taste:
       //
-      // So the body is a sine. That makes the kick pitched, which is what a
-      // kick is -- noise has no pitch and therefore no audible low end, and
-      // ZzFX's noise term scales with frequency, so at 90Hz it adds nothing
-      // however high it is set. Snare and hat stay noise; only this one moves.
+      //   shape 4 is sin(t**3), whose phase accelerates without bound. It has
+      //   no stable pitch -- that is precisely why it reads as noise, and why
+      //   the shipped drums never bubbled: a zero crossing is inaudible when
+      //   there is no pitch to hear. It also means shape 4 can never be a low
+      //   sound. Lowering it moves the runaway inside the note and it sweeps
+      //   upward instead, ending as bright as the hat.
+      //
+      //   slide is `frequency += slide` on every sample, with no floor. It
+      //   always reaches zero and keeps going, and a negative frequency is
+      //   heard as rising pitch. Any pitched waveform driven by slide bubbles
+      //   eventually; steeper only bubbles sooner. Capping, scaling and
+      //   flooring it were all choosing when, never whether.
+      //
+      //   pitchJump is `frequency += pitchJump` once, at pitchJumpTime. It is
+      //   the only bounded pitch move in the parameter set.
+      //
+      // So: a sine body, no slide at all, and one early downward step -- which
+      // is what a kick's pitch envelope is anyway. The step is a fraction of
+      // the kick's own frequency, so it cannot reach zero at any note in the
+      // drum range or on any archetype.
       p[6] = 0;
-      scale(2, 0.55);    // ~100Hz once the note shifts it down
-      // The archetype's own slide is far too steep for a sine this low: it
-      // drives the frequency through zero and back up the other side. Scaled
-      // down and then capped outright, because the ratio alone still rebounds
-      // on the steepest archetypes.
-      p[8] = Math.max(KICK_MAX_SLIDE, Math.min(0, (base[8] ?? 0) * 0.25));
+      scale(2, 0.55);
+      p[8] = 0;
+      p[10] = -KICK_DROP * p[2];
+      p[11] = KICK_DROP_AT;
       scale(0, 1.1, 1);
-      // Envelope untouched: a kick is a thud, and a stretched one is a wash.
       break;
     case 'SNARE':
       // The reference point: the archetype as written, with a touch more

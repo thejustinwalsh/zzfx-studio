@@ -186,12 +186,15 @@ test('a voice never replaces the archetype waveform', () => {
       // The kick alone is allowed a sine body; nothing else may change shape.
       if (v !== 'KICK') assert.equal(p[6], base[6], `${aname} ${v} changed the shape`);
       assert.equal(p[7], base[7], `${aname} ${v} changed the shape curve`);
-      // The slide may deepen, but never reverse or run away: a steep enough
-      // sweep rings as a tone whatever the shape underneath it.
-      assert.ok(
-        Math.sign(p[8]) === Math.sign(base[8]) && Math.abs(p[8]) <= Math.abs(base[8]) * 1.3,
-        `${aname} ${v} slide went from ${base[8]} to ${p[8]}`
-      );
+      if (v === 'KICK') {
+        // The kick drops with pitchJump, which is bounded, and uses no slide at
+        // all -- slide has no floor, so it always reaches zero and continues,
+        // and a negative frequency is heard as rising pitch.
+        assert.equal(p[8], 0, `${aname} kick still uses slide, which cannot stop falling`);
+        assert.ok(p[10] < 0, `${aname} kick has no downward step`);
+      } else {
+        assert.equal(p[8], base[8], `${aname} ${v} changed the slide`);
+      }
     }
   }
 });
@@ -318,6 +321,29 @@ test('every drum sound the generator emits renders cleanly', () => {
       assert.ok(
         rebound <= Math.max(43, t[0] * 0.4),
         `${aname} ${key} falls to ${t[floorAt]}Hz then climbs ${rebound}Hz`
+      );
+    }
+  }
+});
+
+test('the kick can never reach zero, on any archetype or note', () => {
+  // A bubble is the frequency crossing zero and coming back up the other side.
+  // With slide that is inevitable, because slide has no floor. The kick steps
+  // down once instead, by a fraction of its own pitch, so the arithmetic rules
+  // the crossing out rather than a measurement having to catch it afterwards --
+  // and measurement could not: a 256-sample window resolves 86Hz, which is the
+  // pitch of the very thing being measured.
+  for (const slide of [0, -2, -4, -6, -8, -10, -12, -16]) {
+    for (const [aname, arch] of Object.entries(ARCHETYPES_ALL)) {
+      const base = [...arch];
+      base[8] = slide;
+      const p = instruments.drumVoiceInstrument(base, 'KICK');
+      assert.equal(p[8], 0, `${aname}/${slide}: kick must not use slide`);
+      assert.ok(p[10] < 0, `${aname}/${slide}: kick must step downward`);
+      const lowest = p[2] * 2 ** ((1 - 12) / 12);   // note 1, the bottom of the range
+      assert.ok(
+        lowest + p[10] > 0,
+        `${aname}/${slide}: at note 1 the kick is ${lowest.toFixed(0)}Hz and steps ${p[10].toFixed(0)}Hz — through zero`
       );
     }
   }
