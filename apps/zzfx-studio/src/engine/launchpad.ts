@@ -408,9 +408,9 @@ export function buildKeysLayout(
  * from your own songs rather than something invented for the hardware.
  *
  *        col 1   col 2      col 3      col 4
- *  HAT   raw     PD 0x60    PD 0xA0    BC 0x18
- *  SNR   raw     PD 0x60    PD 0xA0    BC 0x18
- *  KCK   raw     PD 0x60    PD 0xA0    BC 0x18
+ *  HAT   raw     PD 0x60    PD 0xA0    ST 0xA0   (choked)
+ *  SNR   raw     PD 0x60    PD 0xA0    ST 0x80   (tightened)
+ *  KCK   raw     PD 0x60    PD 0xA0    BC 0x18   (crushed)
  *
  * Voices run upward so higher on the grid is higher in pitch, as everywhere
  * else. The effect travels with the pad, so recording one writes both the note
@@ -436,18 +436,23 @@ const DRUM_VOICE_LABELS = ['KCK', 'SNR', 'HAT'] as const;
  * and the full drum-strength drop the generator uses (`DRUM_PD_VALUE`), and
  * both are musically useful. Effects do not stack — `applyEffect` takes one.
  */
-const DRUM_VARIANT_FX: readonly (NoteEffect | null)[] = [
-  null,
-  { code: 'PD', value: 0x60 },
-  { code: 'PD', value: 0xa0 },
-  { code: 'BC', value: 0x18 },
+const DRUM_VARIANT_FX: readonly (readonly (NoteEffect | null)[])[] = [
+  // KICK — low enough that bit crush is grit rather than destruction.
+  [null, { code: 'PD', value: 0x60 }, { code: 'PD', value: 0xa0 }, { code: 'BC', value: 0x18 }],
+  // SNARE and HAT live around 11kHz, and bit crush is a sample-and-hold whose
+  // damage is proportional to pitch: the gentlest setting that does anything at
+  // all already halves them, so there is no crushed snare -- only a quieter and
+  // much lower one. They get a choke instead: a shorter envelope, which is a
+  // real articulation on both and safe at any frequency.
+  [null, { code: 'PD', value: 0x60 }, { code: 'PD', value: 0xa0 }, { code: 'ST', value: 0x80 }],
+  [null, { code: 'PD', value: 0x60 }, { code: 'PD', value: 0xa0 }, { code: 'ST', value: 0xa0 }],
 ];
 
-export const DRUM_VARIANT_COLS = DRUM_VARIANT_FX.length;
+export const DRUM_VARIANT_COLS = DRUM_VARIANT_FX[0].length;
 export const DRUM_VARIANT_ROWS = DRUM_VOICE_NOTES.length;
 
 export const DRUM_VARIANTS: readonly DrumVariant[] = DRUM_VOICE_NOTES.flatMap((note, v) =>
-  DRUM_VARIANT_FX.map((effect) => ({
+  DRUM_VARIANT_FX[v].map((effect) => ({
     note,
     effect,
     label: effect

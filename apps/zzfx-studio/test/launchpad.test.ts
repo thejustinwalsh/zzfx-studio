@@ -428,18 +428,26 @@ test('the drum kit is the sounds the generator actually writes', () => {
     lp.DRUM_VARIANTS.map((v: any) => v.label),
     [
       'KCK', 'KCK PD60', 'KCK PDA0', 'KCK BC18',
-      'SNR', 'SNR PD60', 'SNR PDA0', 'SNR BC18',
-      'HAT', 'HAT PD60', 'HAT PDA0', 'HAT BC18',
+      'SNR', 'SNR PD60', 'SNR PDA0', 'SNR ST80',
+      'HAT', 'HAT PD60', 'HAT PDA0', 'HAT STA0',
     ]
   );
 });
 
-test('every pad effect comes from the generator\'s own drum pool', () => {
-  // CHANNEL_FX_POOLS[3] is ['PD','BC'] — punch kicks, crunch snares. A pad that
-  // offered anything else would play a sound no generated song contains.
+test('bit crush only reaches the voice that survives it', () => {
+  // It is a sample-and-hold, so its damage is proportional to pitch: the
+  // gentlest setting that does anything already halves an 11kHz snare or hat.
+  // Only the kick is low enough, and the other two are choked instead.
+  for (const v of lp.DRUM_VARIANTS) {
+    if (v.effect?.code !== 'BC') continue;
+    assert.ok(v.label.startsWith('KCK'), `${v.label} crushes a voice that cannot take it`);
+  }
+  const codes = new Set(lp.DRUM_VARIANTS.map((v: any) => v.effect?.code).filter(Boolean));
+  for (const c of codes) {
+    assert.ok(['PD', 'BC', 'ST'].includes(c as string), `unexpected effect ${c}`);
+  }
   for (const v of lp.DRUM_VARIANTS) {
     if (!v.effect) continue;
-    assert.ok(['PD', 'BC'].includes(v.effect.code), `${v.label} uses ${v.effect.code}`);
     assert.ok(v.effect.value >= 0 && v.effect.value <= 0xff, `${v.label} value out of range`);
   }
 });
