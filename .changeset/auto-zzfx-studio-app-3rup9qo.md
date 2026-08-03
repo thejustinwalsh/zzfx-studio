@@ -5,6 +5,37 @@
 > Branch: claude/tracker-note-entry-def3a5
 > PR: https://github.com/thejustinwalsh/zzfx-studio/pull/7
 
+### 79fc2aeec82d0e21b830f39f487615076b0310ab
+fix: the generator may only put effects on drums that survive one
+Measured every effect against every voice and every archetype, over the
+audible part of the sound rather than its decayed tail, which is where earlier
+measurements went wrong.
+
+  BC  collapses the snare and the hat on every archetype -- it is a
+      sample-and-hold, so an effective-sample-rate control, and both voices sit
+      near 11kHz where the gentlest usable setting already halves them. It
+      rebounds the boomy kick too. There is no drum it is safe on.
+  SU  rebounds the crushed kick. DT and ST rebound the boomy one. A rebound is
+      the frequency reaching zero and climbing back the other side, heard as a
+      bubble rather than a drum.
+  PD, SD, VB, TR  are safe on all three voices across all five archetypes.
+
+Those four become DRUM_FX_PALETTE, which the channel pool is built from and
+which the Launchpad's DRUMS layout will share, so the pads and the generator
+draw on one set of sounds instead of two that disagree. Two vibes asked for BC
+by name and now ask for TR.
+
+The kick's slide is also capped at -2 rather than only scaled. To be accurate
+about what that fixes: it bounds the worst case on the steepest archetypes, but
+with the tail excluded the uncapped version does not rebound audibly, so this
+is defensive rather than a fix for something you could hear.
+
+The sweep test now measures only above -20dB. At 86Hz a 512-sample window
+holds one zero crossing, so a single stray crossing at -30dB read as a 43Hz
+climb -- which is why this test kept reporting bubbles in silence.
+Files: apps/zzfx-studio/src/engine/effects.ts, apps/zzfx-studio/src/engine/instruments.ts, apps/zzfx-studio/test/drums.test.ts
+Stats: 3 files changed, 132 insertions(+), 42 deletions(-)
+
 ### ead46031129b0fc6f517fd5cb3c182120f2fc893
 fix: bit crush was destroying the voices it was aimed at
 ZzFX's bitCrush is a sample-and-hold -- one sample recomputed in every
