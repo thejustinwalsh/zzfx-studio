@@ -395,19 +395,27 @@ export function drumVoiceInstrument(base: ZzFXSound, voice: DrumVoice): ZzFXSoun
 
   switch (voice) {
     case 'KICK':
-      // A low-end thud: low, and short. The envelope is deliberately left at
-      // the archetype's own length -- stretching it produced a long, low noise
-      // wash rather than a thump, which is the wrong instrument entirely.
+      // The one voice that cannot be made of noise.
       //
-      // Pitch and slide both need care. Shape 4 is sin(t**3), so its broadband
-      // character comes from phase accelerating fast; take the frequency far
-      // enough down, or steepen the slide far enough, and the same shape rings
-      // as a descending tone instead. Swept both: 0.65x with 1.25x slide sits
-      // at a spectral peak-to-mean of 4.1, against 3.5 for the archetype and
-      // 112 for the sine-bodied version that sounded like a bubble.
-      scale(2, 0.65);    // the low end
-      scale(8, 1.25);    // and the drop that makes it thud
-      scale(0, 1.1, 1);  // a little more weight
+      // Shape 4 is sin(t**3), whose instantaneous frequency runs away as t
+      // squared. A high base pitch reaches that runaway immediately and just
+      // sounds like steady bright noise -- fine for a snare or a hat. A low one
+      // reaches it *during* the note, so it sweeps upward and ends as bright as
+      // the hat: a rising whoosh, not a thud. Lowering a shape-4 drum does not
+      // make it low, it makes it sweep.
+      //
+      // So the body is a sine. That makes the kick pitched, which is what a
+      // kick is -- noise has no pitch and therefore no audible low end, and
+      // ZzFX's noise term scales with frequency, so at 90Hz it adds nothing
+      // however high it is set. Snare and hat stay noise; only this one moves.
+      p[6] = 0;
+      scale(2, 0.55);    // ~100Hz once the note shifts it down
+      // The archetype's own slide is four times too steep for a sine this low:
+      // it drives the frequency through zero and back up the other side, which
+      // is audibly a bubble. A quarter of it gives the drop without the rise.
+      scale(8, 0.25);
+      scale(0, 1.1, 1);
+      // Envelope untouched: a kick is a thud, and a stretched one is a wash.
       break;
     case 'SNARE':
       // The reference point: the archetype as written, with a touch more
