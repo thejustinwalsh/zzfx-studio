@@ -5,6 +5,18 @@
 > Branch: claude/tracker-note-entry-def3a5
 > PR: https://github.com/thejustinwalsh/zzfx-studio/pull/7
 
+### 579758318b44f2157933ebb5cd87f80e9713a031
+fix: transfer list takes ArrayBuffer, not ArrayBufferLike
+A Float32Array's buffer is typed ArrayBufferLike, which admits
+SharedArrayBuffer, and postMessage's transfer list will not accept it. These
+buffers are never shared and only ArrayBuffer transfers, so the cast is
+narrowing to what is actually there.
+
+Pre-existing on this branch and already fixed on the Launchpad branch; ported
+here so the error does not reach main if this merges on its own.
+Files: apps/zzfx-studio/src/engine/render-worker.ts
+Stats: 1 file changed, 3 insertions(+), 1 deletion(-)
+
 ### 8b5533a8a84c80797b0f305a7ef306d7f3018b27
 fix: floor how short a drum voice can be
 The hat multiplies three envelope stages down (0.4 sustain, 0.35 release,
