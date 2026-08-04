@@ -9,27 +9,28 @@ import { useServiceWorkerUpdate, applyUpdate, dismissUpdate } from '../sw-regist
 export function UpdateBanner() {
   const { hasUpdate, version } = useServiceWorkerUpdate();
 
-  if (isNeu()) return null;
+  // Every hook runs before any early return — bailing out first changes the
+  // hook count between renders, which is what Rules of Hooks forbids.
   const translateY = useSharedValue(60);
   const opacity = useSharedValue(0);
 
   useEffect(() => {
     if (hasUpdate) {
       // Slide up after a short delay so it doesn't fight the initial render
-      translateY.value = withDelay(400, withTiming(0, { duration: 250 }));
-      opacity.value = withDelay(400, withTiming(1, { duration: 250 }));
+      translateY.set(withDelay(400, withTiming(0, { duration: 250 })));
+      opacity.set(withDelay(400, withTiming(1, { duration: 250 })));
     } else {
-      translateY.value = 60;
-      opacity.value = 0;
+      translateY.set(60);
+      opacity.set(0);
     }
   }, [hasUpdate]);
 
   const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
-    opacity: opacity.value,
+    transform: [{ translateY: translateY.get() }],
+    opacity: opacity.get(),
   }));
 
-  if (!hasUpdate) return null;
+  if (isNeu() || !hasUpdate) return null;
 
   return (
     <Animated.View style={[styles.container, animatedStyle]}>

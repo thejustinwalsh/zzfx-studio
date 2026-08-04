@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel } from './engine';
+import type { Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel, Pattern, PatternEffects, NoteEffect } from './engine';
 import { generateSong, generateSongName, VIBE_CONFIG, CHROMATIC, SCALES } from './engine';
 
 function pick<T>(arr: readonly T[]): T {
@@ -54,6 +54,20 @@ interface SongState {
   setMutedChannels: (chs: number[] | ((prev: number[]) => number[])) => void;
   setSoloChannel: (ch: number | null) => void;
 
+  // Pattern editing
+  setNote: (pattern: PatternLabel, channel: number, row: number, note: number) => void;
+  setEffect: (pattern: PatternLabel, channel: number, row: number, effect: NoteEffect | null) => void;
+
+  // Undo/redo — session only, never persisted
+  history: History;
+  /** Replace the song and record the previous one as an undo step. */
+  commitSong: (song: Song, label: string) => void;
+  /** Open a transaction so a burst of edits collapses into one undo step. */
+  beginEdit: (label: string) => void;
+  endEdit: () => void;
+  undo: () => boolean;
+  redo: () => boolean;
+
   // Compound actions
   renameSong: (name: string) => void;
   loadSong: (song: Song) => void;
@@ -65,6 +79,77 @@ interface SongState {
   // Project actions
   loadProject: (id: string) => void;
   deleteProject: (id: string) => void;
+}
+
+/**
+ * A point in time we can return to.
+ *
+ * Snapshots are whole-song references rather than diffs. That is affordable
+ * because every edit is an immutable update that clones only the channel it
+ * touches — an old Song shares almost all of its structure with the current
+ * one, so a snapshot costs a handful of pointers, not a copy of the song.
+ *
+ * activePattern rides along so undo returns you to where the edit happened
+ * instead of silently changing a pattern you are not looking at.
+ */
+export interface Snapshot {
+  song: Song;
+  activePattern: PatternLabel;
+  label: string;
+}
+
+export interface History {
+  past: Snapshot[];
+  future: Snapshot[];
+  /** Open transaction: captured at beginEdit, banked at endEdit. */
+  pending: Snapshot | null;
+}
+
+/** Deep enough that you can undo out of a long editing run. */
+const HISTORY_LIMIT = 100;
+
+export const EMPTY_HISTORY: History = { past: [], future: [], pending: null };
+
+function snapshotOf(s: SongState, label: string): Snapshot | null {
+  return s.song ? { song: s.song, activePattern: s.activePattern, label } : null;
+}
+
+/**
+ * Bank the current state as an undo step and drop the redo branch.
+ *
+ * Skipped while a transaction is open — the transaction already captured the
+ * state before the burst began, so a drag lands as one step rather than one
+ * per pixel threshold crossed.
+ */
+function record(s: SongState, label: string): Pick<SongState, 'history'> | Record<string, never> {
+  if (s.history.pending) return {};
+  const snap = snapshotOf(s, label);
+  if (!snap) return {};
+  const past = [...s.history.past, snap];
+  if (past.length > HISTORY_LIMIT) past.shift();
+  return { history: { past, future: [], pending: null } };
+}
+
+/**
+ * What actually reaches storage. Undo history is deliberately absent: it holds
+ * references to every past version of the song, and writing those to
+ * localStorage would multiply the stored payload by the length of the session.
+ */
+export function partializeState(state: SongState) {
+  return {
+    projects: state.projects,
+    activeProjectId: state.activeProjectId,
+    song: state.song,
+    vibe: state.vibe,
+    key: state.key,
+    scale: state.scale,
+    bpm: state.bpm,
+    songLength: state.songLength,
+    channelVolumes: state.channelVolumes,
+    activePattern: state.activePattern,
+    mutedChannels: state.mutedChannels,
+    soloChannel: state.soloChannel,
+  };
 }
 
 // Sync top-level state to the active project entry
@@ -123,6 +208,113 @@ export const useSongStore = create<SongState>()(
       }),
       setSoloChannel: (soloChannel) => set((s) => syncToProject({ soloChannel }, s)),
 
+      // Note values live at index row+2 — ChannelData is [instrument, pan, ...notes].
+      setNote: (pattern, channel, row, note) => set((s) => {
+        if (!s.song) return {};
+        const existing = s.song.patterns[pattern];
+        if (!existing) return {};
+        if (existing[channel]?.[row + 2] === note) return {};
+
+        const channels = [...existing] as Pattern;
+        const data = [...channels[channel]];
+        data[row + 2] = note;
+        channels[channel] = data;
+
+        const song = {
+          ...s.song,
+          patterns: { ...s.song.patterns, [pattern]: channels },
+        };
+        return syncToProject({ ...record(s, 'note'), song }, s);
+      }),
+
+      setEffect: (pattern, channel, row, effect) => set((s) => {
+        if (!s.song) return {};
+        const existing = s.song.patternEffects[pattern];
+        if (!existing) return {};
+        // Matches setNote: an unchanged value is not an edit, and must not
+        // consume an undo step.
+        const before = existing[channel]?.[row] ?? null;
+        const same = before === effect ||
+          (!!before && !!effect && before.code === effect.code && before.value === effect.value);
+        if (same) return {};
+
+        const channels = [...existing] as PatternEffects;
+        const data = [...channels[channel]];
+        data[row] = effect;
+        channels[channel] = data;
+
+        const song = {
+          ...s.song,
+          patternEffects: { ...s.song.patternEffects, [pattern]: channels },
+        };
+        return syncToProject({ ...record(s, 'effect'), song }, s);
+      }),
+
+      // --- Undo/redo ---------------------------------------------------------
+
+      history: EMPTY_HISTORY,
+
+      commitSong: (song, label) => set((s) =>
+        syncToProject({ ...record(s, label), song }, s)
+      ),
+
+      beginEdit: (label) => set((s) => {
+        if (s.history.pending) return {};
+        const snap = snapshotOf(s, label);
+        if (!snap) return {};
+        return { history: { ...s.history, pending: snap } };
+      }),
+
+      endEdit: () => set((s) => {
+        const { pending, past } = s.history;
+        if (!pending) return {};
+        // A transaction that changed nothing leaves no trace.
+        if (pending.song === s.song) {
+          return { history: { ...s.history, pending: null } };
+        }
+        const nextPast = [...past, pending];
+        if (nextPast.length > HISTORY_LIMIT) nextPast.shift();
+        return { history: { past: nextPast, future: [], pending: null } };
+      }),
+
+      undo: () => {
+        const s = get();
+        const prev = s.history.past[s.history.past.length - 1];
+        if (!prev || !s.song) return false;
+        set((cur) => {
+          const current = snapshotOf(cur, prev.label);
+          return syncToProject({
+            song: prev.song,
+            activePattern: prev.activePattern,
+            history: {
+              past: cur.history.past.slice(0, -1),
+              future: current ? [...cur.history.future, current] : cur.history.future,
+              pending: null,
+            },
+          }, cur);
+        });
+        return true;
+      },
+
+      redo: () => {
+        const s = get();
+        const next = s.history.future[s.history.future.length - 1];
+        if (!next || !s.song) return false;
+        set((cur) => {
+          const current = snapshotOf(cur, next.label);
+          return syncToProject({
+            song: next.song,
+            activePattern: next.activePattern,
+            history: {
+              past: current ? [...cur.history.past, current] : cur.history.past,
+              future: cur.history.future.slice(0, -1),
+              pending: null,
+            },
+          }, cur);
+        });
+        return true;
+      },
+
       renameSong: (name) => set((s) => {
         if (!s.song) return {};
         const song = { ...s.song, config: { ...s.song.config, name } };
@@ -144,6 +336,7 @@ export const useSongStore = create<SongState>()(
         set((s) => ({
           projects: { ...s.projects, [id]: entry },
           activeProjectId: id,
+          history: EMPTY_HISTORY,
           song,
           vibe: song.config.vibe,
           key: song.config.key,
@@ -172,6 +365,7 @@ export const useSongStore = create<SongState>()(
         set((prev) => ({
           projects: { ...prev.projects, [id]: entry },
           activeProjectId: id,
+          history: EMPTY_HISTORY,
           song: newSong,
           vibe: v,
           key: k,
@@ -216,6 +410,7 @@ export const useSongStore = create<SongState>()(
         if (!project) return {};
         return {
           activeProjectId: id,
+          history: EMPTY_HISTORY,
           song: project.song,
           vibe: project.song.config.vibe,
           key: project.song.config.key,
@@ -240,6 +435,7 @@ export const useSongStore = create<SongState>()(
             return {
               projects,
               activeProjectId: next.id,
+              history: EMPTY_HISTORY,
               song: next.song,
               vibe: next.song.config.vibe,
               key: next.song.config.key,
@@ -252,7 +448,7 @@ export const useSongStore = create<SongState>()(
               soloChannel: next.soloChannel,
             };
           }
-          return { projects, activeProjectId: null, song: null };
+          return { projects, activeProjectId: null, song: null, history: EMPTY_HISTORY };
         }
         return { projects };
       }),
@@ -261,20 +457,7 @@ export const useSongStore = create<SongState>()(
       name: 'zzfx-studio',
       version: 2,
       // Only persist data, not callbacks
-      partialize: (state) => ({
-        projects: state.projects,
-        activeProjectId: state.activeProjectId,
-        song: state.song,
-        vibe: state.vibe,
-        key: state.key,
-        scale: state.scale,
-        bpm: state.bpm,
-        songLength: state.songLength,
-        channelVolumes: state.channelVolumes,
-        activePattern: state.activePattern,
-        mutedChannels: state.mutedChannels,
-        soloChannel: state.soloChannel,
-      }),
+      partialize: partializeState,
       // Migrate from v1 (single song) to v2 (multi-project)
       migrate: (persisted: any, version: number) => {
         if (version < 2) {

@@ -5,7 +5,8 @@
     <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
     <title>ZzFX Studio</title>
-    <meta name="description" content="Algorithmic chiptune tracker — generate 4-channel retro songs instantly. No AI, pure math." />
+    <meta name="description" content="Algorithmic chiptune tracker — generate, edit and share 4-channel retro songs instantly. No AI, pure math." />
+    <link rel="canonical" href="https://tjw.dev/zzfx-studio/" />
     <meta name="theme-color" content="#0C0C0E" />
 
     <!-- PWA -->
@@ -20,19 +21,28 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="ZzFX Studio" />
 
-    <!-- Open Graph -->
+    <!-- Open Graph.
+         These URLs must be absolute: crawlers do not resolve relative paths,
+         and a relative og:image means no preview image at all. They point at
+         the deployed site even from a local build, because that is the URL a
+         crawler will actually fetch. -->
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="ZzFX Studio" />
-    <meta property="og:description" content="Algorithmic chiptune tracker — generate 4-channel retro songs instantly. No AI, pure math." />
-    <meta property="og:image" content="og-image.png" />
+    <meta property="og:site_name" content="ZzFX Studio" />
+    <meta property="og:url" content="https://tjw.dev/zzfx-studio/" />
+    <meta property="og:title" content="ZzFX Studio — algorithmic chiptune tracker" />
+    <meta property="og:description" content="Algorithmic chiptune tracker — generate, edit and share 4-channel retro songs instantly. No AI, pure math." />
+    <meta property="og:image" content="https://tjw.dev/zzfx-studio/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="The ZzFX Studio tracker: four colour-coded channels of note data over a dark grid, with waveform displays and a pattern sequence." />
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="ZzFX Studio" />
-    <meta name="twitter:description" content="Algorithmic chiptune tracker — generate 4-channel retro songs instantly." />
-    <meta name="twitter:image" content="og-image.png" />
+    <meta name="twitter:title" content="ZzFX Studio — algorithmic chiptune tracker" />
+    <meta name="twitter:description" content="Algorithmic chiptune tracker — generate, edit and share 4-channel retro songs instantly. No AI, pure math." />
+    <meta name="twitter:image" content="https://tjw.dev/zzfx-studio/og-image.png" />
+    <meta name="twitter:image:alt" content="The ZzFX Studio tracker grid, four colour-coded channels over a dark background." />
 
     <style id="expo-reset">
       html,

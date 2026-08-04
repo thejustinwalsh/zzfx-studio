@@ -3,8 +3,8 @@ declare global {
     NL_APPID?: string;
     Neutralino?: {
       os: {
-        showSaveDialog: (title: string, options?: { defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<string>;
-        showOpenDialog: (title: string, options?: { filters?: Array<{ name: string; extensions: string[] }> }) => Promise<string[]>;
+        showSaveDialog: (title: string, options?: { defaultPath?: string; filters?: { name: string; extensions: string[] }[] }) => Promise<string>;
+        showOpenDialog: (title: string, options?: { filters?: { name: string; extensions: string[] }[] }) => Promise<string[]>;
       };
       filesystem: {
         writeFile: (path: string, data: string) => Promise<void>;

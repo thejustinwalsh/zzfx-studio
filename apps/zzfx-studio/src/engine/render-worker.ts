@@ -22,7 +22,9 @@ self.onmessage = (e: MessageEvent) => {
       const l = left instanceof Float32Array ? left : new Float32Array(left);
       const r = right instanceof Float32Array ? right : new Float32Array(right);
       result.push([l, r]);
-      transferable.push(l.buffer, r.buffer);
+      // A Float32Array's buffer is typed ArrayBufferLike, which admits
+      // SharedArrayBuffer; these are never shared, and only ArrayBuffer transfers.
+      transferable.push(l.buffer as ArrayBuffer, r.buffer as ArrayBuffer);
     }
 
     self.postMessage({ type: 'result', id: msg.id, buffers: result }, transferable as any);

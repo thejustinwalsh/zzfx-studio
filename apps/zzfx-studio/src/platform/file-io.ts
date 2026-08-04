@@ -3,7 +3,7 @@
 
 import { isNeu } from './is-neu';
 
-export async function saveTextFile(content: string, filename: string, filters?: Array<{ name: string; extensions: string[] }>) {
+export async function saveTextFile(content: string, filename: string, filters?: { name: string; extensions: string[] }[]) {
   console.log('[file-io] saveTextFile called, isNeu:', isNeu(), 'Neutralino:', typeof window.Neutralino);
   try {
     if (isNeu()) {
@@ -19,7 +19,7 @@ export async function saveTextFile(content: string, filename: string, filters?: 
   }
 }
 
-export async function saveBinaryFile(data: ArrayBuffer | Blob, filename: string, filters?: Array<{ name: string; extensions: string[] }>) {
+export async function saveBinaryFile(data: ArrayBuffer | Blob, filename: string, filters?: { name: string; extensions: string[] }[]) {
   console.log('[file-io] saveBinaryFile called, isNeu:', isNeu());
   try {
     if (isNeu()) {
@@ -38,7 +38,7 @@ export async function saveBinaryFile(data: ArrayBuffer | Blob, filename: string,
   }
 }
 
-export async function openTextFile(filters?: Array<{ name: string; extensions: string[] }>): Promise<string | null> {
+export async function openTextFile(filters?: { name: string; extensions: string[] }[]): Promise<string | null> {
   console.log('[file-io] openTextFile called, isNeu:', isNeu());
   try {
     if (isNeu()) {

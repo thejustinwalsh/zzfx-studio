@@ -7,9 +7,11 @@ import Animated, {
   withSequence,
   withTiming,
   cancelAnimation,
+  runOnJS,
   Easing,
 } from 'react-native-reanimated';
 import { AnimatedPressable } from './AnimatedPressable';
+import { embedSnippet, loadShareCodec, prefetchShareCodec } from '../engine/share';
 import { colors, fonts, fontSize, spacing } from '../theme';
 import { ZZFX } from 'zzfx';
 import { ZZFXM } from '@zzfx-studio/zzfxm';
@@ -18,6 +20,31 @@ import { songToCode, songToClipboard, trimChannelsPreservingRowCount } from '../
 import { songToZzfxm } from '../engine/song';
 import { saveTextFile, saveBinaryFile } from '../platform';
 import type { Song } from '../engine/types';
+
+/** Clipboard with the execCommand fallback for browsers that refuse the API. */
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    // Fall through to the legacy path.
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  // Off-screen: focusing a visible textarea scrolls the page.
+  ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } finally {
+    document.body.removeChild(ta);
+  }
+  // Throwing matters: the caller shows a success state otherwise, for a
+  // clipboard that holds nothing.
+  if (!ok) throw new Error('Copy was refused by the browser');
+}
 
 type StereoBuffer = [Float32Array, Float32Array];
 
@@ -278,32 +305,84 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
     };
   }, [isPlaying, rendered, stopPlayback]);
 
-  const handleCopy = useCallback(async () => {
-    const clipCode = songToClipboard(song);
-    try {
-      await navigator.clipboard.writeText(clipCode);
-    } catch {
-      const ta = document.createElement('textarea');
-      ta.value = clipCode;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-    }
-  }, [song]);
+  const handleCopy = useCallback(() => copyText(songToClipboard(song)), [song]);
+  const handleCopyFull = useCallback(() => copyText(code), [code]);
 
-  const handleCopyFull = useCallback(async () => {
+  // Share link: the whole song packed into a URL. Packing and deflating is
+  // async, so the button runs a small state machine — spinner while it works,
+  // a green tick to confirm, then a fade back to resting. A clipboard write is
+  // invisible otherwise, and silence reads as a broken button.
+  const [shareState, setShareState] = useState<'idle' | 'working' | 'copied' | 'failed'>('idle');
+  const [spinFrame, setSpinFrame] = useState(0);
+  const [lastShare, setLastShare] = useState<'link' | 'embed'>('link');
+  const shareOpacity = useSharedValue(1);
+  const shareResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // An ASCII spinner rather than a rotating glyph — it belongs to the same
+  // family as the rest of the type here.
+  useEffect(() => {
+    if (shareState !== 'working') return;
+    const id = setInterval(() => setSpinFrame((f) => f + 1), 90);
+    return () => clearInterval(id);
+  }, [shareState]);
+
+  const settleShare = useCallback((next: 'copied' | 'failed') => {
+    setShareState(next);
+    shareOpacity.set(1);
+    if (shareResetRef.current) clearTimeout(shareResetRef.current);
+    shareResetRef.current = setTimeout(() => {
+      shareOpacity.set(withTiming(0, { duration: 220 }, (done) => {
+        if (!done) return;
+        runOnJS(setShareState)('idle');
+        shareOpacity.set(withTiming(1, { duration: 220 }));
+      }));
+    }, 900);
+  }, [shareOpacity]);
+
+  useEffect(() => () => {
+    if (shareResetRef.current) clearTimeout(shareResetRef.current);
+  }, []);
+
+  const runShare = useCallback(async (build: () => Promise<string>) => {
+    if (shareState === 'working') return;
+    setShareState('working');
+    shareOpacity.set(1);
     try {
-      await navigator.clipboard.writeText(code);
+      await copyText(await build());
+      settleShare('copied');
     } catch {
-      const ta = document.createElement('textarea');
-      ta.value = code;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
+      settleShare('failed');
     }
-  }, [code]);
+  }, [shareState, settleShare, shareOpacity]);
+
+  const handleCopyShareUrl = useCallback(
+    () => (setLastShare('link'), runShare(async () => {
+      const { songToShareUrl } = await loadShareCodec();
+      return songToShareUrl(song, window.location.origin, window.location.pathname);
+    })),
+    [runShare, song]
+  );
+
+  // Copies the whole iframe tag rather than the bare URL — that is what gets
+  // pasted, and it carries the allow="autoplay" the frame needs to make sound
+  // once the visitor presses play.
+  const handleCopyEmbed = useCallback(
+    () => (setLastShare('embed'), runShare(async () => {
+      const { songToEmbedUrl } = await loadShareCodec();
+      const url = await songToEmbedUrl(song, window.location.origin, window.location.pathname);
+      return embedSnippet(url, song.config.name || 'ZzFX Studio song');
+    })),
+    [runShare, song]
+  );
+
+  const shareAnimatedStyle = useAnimatedStyle(() => ({ opacity: shareOpacity.get() }));
+
+  const SPINNER = ['|', '/', '-', '\\'];
+  const shareGlyph =
+    shareState === 'working' ? SPINNER[spinFrame % SPINNER.length]
+      : shareState === 'copied' ? '✓'
+      : shareState === 'failed' ? '✕'
+      : '↗';
 
   const handleDownload = useCallback(() => {
     const filename = `${(song.config.name || 'zzfx-song').toLowerCase().replace(/\s+/g, '-')}.js`;
@@ -327,21 +406,21 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
   const pulseOpacity = useSharedValue(1);
   useEffect(() => {
     if (isRendering) {
-      pulseOpacity.value = withRepeat(
+      pulseOpacity.set(withRepeat(
         withSequence(
           withTiming(0.25, { duration: 600, easing: Easing.inOut(Easing.ease) }),
           withTiming(0.6, { duration: 600, easing: Easing.inOut(Easing.ease) }),
         ),
         -1, false,
-      );
+      ));
     } else {
       cancelAnimation(pulseOpacity);
-      pulseOpacity.value = withTiming(1, { duration: 300 });
+      pulseOpacity.set(withTiming(1, { duration: 300 }));
     }
   }, [isRendering, pulseOpacity]);
 
   const waveformAnimStyle = useAnimatedStyle(() => ({
-    opacity: pulseOpacity.value,
+    opacity: pulseOpacity.get(),
   }));
 
   const BAR_HEIGHT = 48;
@@ -436,6 +515,56 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
               accessibilityLabel="Export as WAV audio file"
             >
               <Text style={[styles.actionBtnText, isRendering && styles.btnDisabledText]}>EXPORT WAV</Text>
+            </AnimatedPressable>
+
+            {/* Share sits apart from the export actions — it hands someone the
+                song itself, rather than producing a file or a snippet. */}
+            <View style={styles.transportSpacer} />
+            <AnimatedPressable
+              onPress={handleCopyEmbed}
+              style={[
+                styles.shareBtn,
+                lastShare === 'embed' && shareState === 'copied' && styles.actionBtnDone,
+                lastShare === 'embed' && shareState === 'failed' && styles.shareBtnFailed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Copy an iframe embed snippet for this song"
+            >
+              <Animated.Text
+                style={[
+                  styles.shareBtnText,
+                  lastShare === 'embed' && shareState === 'copied' && styles.actionBtnDoneText,
+                  lastShare === 'embed' && shareState === 'failed' && styles.shareBtnTextFailed,
+                  shareAnimatedStyle,
+                ]}
+              >
+                {lastShare === 'embed' ? shareGlyph : '< >'}
+              </Animated.Text>
+            </AnimatedPressable>
+            <AnimatedPressable
+              onPress={handleCopyShareUrl}
+              style={[
+                styles.shareBtn,
+                lastShare === 'link' && shareState === 'copied' && styles.actionBtnDone,
+                lastShare === 'link' && shareState === 'failed' && styles.shareBtnFailed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={
+                lastShare === 'link' && shareState === 'copied'
+                  ? 'Share link copied to clipboard'
+                  : 'Copy a shareable link to this song'
+              }
+            >
+              <Animated.Text
+                style={[
+                  styles.shareBtnText,
+                  lastShare === 'link' && shareState === 'copied' && styles.actionBtnDoneText,
+                  lastShare === 'link' && shareState === 'failed' && styles.shareBtnTextFailed,
+                  shareAnimatedStyle,
+                ]}
+              >
+                {lastShare === 'link' ? shareGlyph : '↗'}
+              </Animated.Text>
             </AnimatedPressable>
           </View>
 
@@ -592,6 +721,38 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     borderWidth: 1,
     borderColor: colors.borderSubtle,
+  },
+  transportSpacer: {
+    flex: 1,
+    minWidth: spacing.sm,
+  },
+  shareBtn: {
+    width: 38,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+  },
+  shareBtnFailed: {
+    borderColor: colors.accentStop,
+  },
+  shareBtnTextFailed: {
+    color: colors.accentStop,
+  },
+  shareBtnText: {
+    fontFamily: fonts.mono,
+    fontSize: 15,
+    lineHeight: 17,
+    color: colors.textSecondary,
+    fontWeight: '700',
+  },
+  actionBtnDone: {
+    borderColor: colors.accentPlay,
+    backgroundColor: 'rgba(34, 197, 94, 0.15)',
+  },
+  actionBtnDoneText: {
+    color: colors.accentPlay,
   },
   actionBtnText: {
     fontFamily: fonts.mono,

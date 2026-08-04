@@ -79,6 +79,15 @@ export class AudioGraph {
     this._isPlaying = false;
   }
 
+  /** Output level for this graph only — each player owns its own instance. */
+  setMasterVolume(volume: number): void {
+    this.masterGain.gain.value = Math.max(0, Math.min(1, volume));
+  }
+
+  getMasterVolume(): number {
+    return this.masterGain.gain.value;
+  }
+
   setChannelGain(ch: number, gain: number): void {
     if (ch >= 0 && ch < this.gainNodes.length) {
       this.gainNodes[ch].gain.value = gain;

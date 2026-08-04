@@ -11,12 +11,14 @@ import {
   VibeName,
 } from './types';
 import { VIBE_CONFIG, getRandomBpm } from './vibes';
-import { generateInstruments } from './instruments';
+import { generateInstruments, drumVoiceInstrument } from './instruments';
+import type { DrumVoice } from './instruments';
 import { generateDrumPattern } from './drums';
 import { generateBassPattern } from './bass';
 import { generateMelodyPattern } from './melody';
 import { generateHarmonyPattern } from './harmony';
-import { generateChordProgression } from './chords';
+import { generateChordProgression, DEFAULT_BASS_BASE_OCTAVE } from './chords';
+import { baseOctaveFromFreq, FREQ_C3 } from './scales';
 import { generatePatternEffects, generateChannelEffects, applyEffect } from './effects';
 import { generateSongName } from './songNames';
 import { zzfxMChannels } from './zzfx';
@@ -42,14 +44,30 @@ const ROLE_BASS_MULTIPLIER: Record<SectionRole, number> = {
   climax: 1.2,
 };
 
+/** The bass channel; the one whose tuning the generator has to respect. */
+const BASS_CHANNEL = 2;
+
+/**
+ * Where a song's bass notes must be measured from.
+ *
+ * Read off the instrument the song actually has rather than assumed, because a
+ * song saved before the bass was retuned still carries a C4 instrument, and
+ * encoding fresh notes against C3 would put them an octave out the moment any
+ * bass is regenerated.
+ */
+function bassBaseOctaveOf(song: Song): number {
+  return baseOctaveFromFreq(song.instruments[BASS_CHANNEL]?.[2] ?? FREQ_C3);
+}
+
 function generatePatternForRole(
   config: SongConfig,
   role: SectionRole,
+  bassBaseOctave: number = DEFAULT_BASS_BASE_OCTAVE,
 ): { pattern: Pattern; effects: PatternEffects } {
   const vibeConfig = VIBE_CONFIG[config.vibe];
 
   // Generate chord progression — contrast/bridge/climax get fresh progressions
-  const progression = generateChordProgression(config.vibe, config.key, config.scale);
+  const progression = generateChordProgression(config.vibe, config.key, config.scale, bassBaseOctave);
 
   // Drums always play (backbone of every section)
   const { channelData: drumChannel, kickPattern } = generateDrumPattern(config.vibe);
@@ -185,7 +203,7 @@ export function regenerateAllPatterns(
 
   for (const label of song.patternOrder) {
     const role = song.patternRoles[label] ?? 'verse';
-    const { pattern, effects } = generatePatternForRole(newConfig, role);
+    const { pattern, effects } = generatePatternForRole(newConfig, role, bassBaseOctaveOf(song));
     patterns[label] = pattern;
     patternEffects[label] = effects;
   }
@@ -218,7 +236,7 @@ export function regenerateWithNewLength(
   for (let i = 0; i < template.roles.length; i++) {
     const label = PATTERN_LABELS[i];
     const role = template.roles[i];
-    const { pattern, effects } = generatePatternForRole(newConfig, role);
+    const { pattern, effects } = generatePatternForRole(newConfig, role, bassBaseOctaveOf(song));
     patterns[label] = pattern;
     patternRoles[label] = role;
     patternEffects[label] = effects;
@@ -241,7 +259,7 @@ export function regeneratePattern(
   patternLabel: PatternLabel
 ): { pattern: Pattern; effects: PatternEffects } {
   const role = song.patternRoles[patternLabel] ?? 'verse';
-  return generatePatternForRole(song.config, role);
+  return generatePatternForRole(song.config, role, bassBaseOctaveOf(song));
 }
 
 export function regenerateChannel(
@@ -254,7 +272,7 @@ export function regenerateChannel(
   const role = song.patternRoles[patternLabel] ?? 'verse';
 
   const progression = generateChordProgression(
-    song.config.vibe, song.config.key, song.config.scale
+    song.config.vibe, song.config.key, song.config.scale, bassBaseOctaveOf(song)
   );
 
   const melodyMult = ROLE_MELODY_MULTIPLIER[role];
@@ -331,65 +349,76 @@ interface ExpandedSong {
   channelMap: number[]; // channelMap[physicalIdx] = logicalIdx (0-3)
 }
 
+const DRUM_CHANNEL = 3;
+
+/** Which drum a note on the drum channel is, matching drumNoteToName's ranges. */
+function drumVoiceOf(note: number): DrumVoice {
+  if (note <= 6) return 'KICK';
+  if (note <= 22) return 'SNARE';
+  return 'HAT';
+}
+
+/**
+ * Identifies the instrument a note needs.
+ *
+ * A note wants a variant when it carries an effect, and — on the drum channel —
+ * always, because kick, snare and hat are different instruments rather than
+ * different pitches of one. Returns null when the channel's base instrument
+ * will do.
+ */
+function variantKeyFor(ch: number, note: number, fx: NoteEffect | null | undefined): string | null {
+  const voice = ch === DRUM_CHANNEL ? drumVoiceOf(note) : null;
+  if (!voice && !fx) return null;
+  return `${ch}_${voice ?? ''}_${fx ? `${fx.code}${fx.value}` : ''}`;
+}
+
 function expandSong(song: Song): ExpandedSong {
-  const hasEffects = song.patternEffects &&
-    Object.keys(song.patternEffects).length > 0;
-
-  // Fast path: no effects → return original format
-  if (!hasEffects) {
-    const patternArrays: number[][][] = [];
-    for (const label of song.patternOrder) {
-      patternArrays.push([...song.patterns[label]]);
-    }
-    return {
-      instruments: [...song.instruments],
-      patterns: patternArrays,
-      sequence: song.sequence,
-      bpm: song.config.bpm,
-      channelMap: [0, 1, 2, 3],
-    };
-  }
-
-  // Collect all unique effect keys across all patterns
-  // Key format: "${logicalCh}_${code}_${value}"
-  const effectKeys = new Map<string, { logicalCh: number; effect: NoteEffect }>();
+  // Every note that needs its own instrument, collected across all patterns.
+  const variants = new Map<string, { logicalCh: number; voice: DrumVoice | null; effect: NoteEffect | null }>();
 
   for (const label of song.patternOrder) {
-    const effects = song.patternEffects[label];
-    if (!effects) continue;
+    const pattern = song.patterns[label];
+    const effects = song.patternEffects?.[label];
     for (let ch = 0; ch < 4; ch++) {
-      if (!effects[ch]) continue;
-      for (const fx of effects[ch]) {
-        if (!fx) continue;
-        const key = `${ch}_${fx.code}_${fx.value}`;
-        if (!effectKeys.has(key)) {
-          effectKeys.set(key, { logicalCh: ch, effect: fx });
-        }
+      const channelData = pattern[ch];
+      if (!channelData) continue;
+      for (let row = 0; row < ROWS; row++) {
+        const note = channelData[row + 2];
+        if (note <= 0) continue;
+        const fx = effects?.[ch]?.[row] ?? null;
+        const key = variantKeyFor(ch, note, fx);
+        if (!key || variants.has(key)) continue;
+        variants.set(key, {
+          logicalCh: ch,
+          voice: ch === DRUM_CHANNEL ? drumVoiceOf(note) : null,
+          effect: fx,
+        });
       }
     }
   }
 
-  // No effects found after scanning → fast path
-  if (effectKeys.size === 0) {
-    const patternArrays: number[][][] = [];
-    for (const label of song.patternOrder) {
-      patternArrays.push([...song.patterns[label]]);
-    }
+  // Nothing needs a variant — the four logical channels render as they are.
+  if (variants.size === 0) {
     return {
       instruments: [...song.instruments],
-      patterns: patternArrays,
+      patterns: song.patternOrder.map((label) => [...song.patterns[label]]),
       sequence: song.sequence,
       bpm: song.config.bpm,
       channelMap: [0, 1, 2, 3],
     };
   }
+
+  const effectKeys = variants;
 
   // Build expanded instruments: base 4 + effect variants
   const expandedInstruments = song.instruments.map(i => [...i]);
   const effectInstMap = new Map<string, number>();
 
-  for (const [key, { logicalCh, effect }] of effectKeys) {
-    const variant = applyEffect([...song.instruments[logicalCh]], effect);
+  for (const [key, { logicalCh, voice, effect }] of effectKeys) {
+    // Voice first so the effect modifies the drum it is actually attached to.
+    let variant = [...song.instruments[logicalCh]];
+    if (voice) variant = drumVoiceInstrument(variant, voice);
+    if (effect) variant = applyEffect(variant, effect);
     effectInstMap.set(key, expandedInstruments.length);
     expandedInstruments.push(variant);
   }
@@ -432,10 +461,10 @@ function expandSong(song: Song): ExpandedSong {
         const note = channelData[row + 2];
         if (note <= 0) continue;
 
-        const fx = channelEffects?.[row];
+        const fx = channelEffects?.[row] ?? null;
+        const key = variantKeyFor(ch, note, fx);
 
-        if (fx) {
-          const key = `${ch}_${fx.code}_${fx.value}`;
+        if (key) {
           const physIdx = effectPhysMap.get(key)!;
           const instIdx = effectInstMap.get(key)!;
           physPattern[physIdx][0] = instIdx;

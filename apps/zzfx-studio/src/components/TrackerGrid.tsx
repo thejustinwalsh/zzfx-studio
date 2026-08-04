@@ -3,7 +3,7 @@ import { Canvas, Text as SkiaText, Rect, Line, vec, Fill, useFont } from '@shopi
 import { Text, View, StyleSheet } from 'react-native';
 import { colors, channelColors, type ChannelIndex } from '../theme/colors';
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+ 
 const monoFont = require('../../assets/JetBrainsMono-Regular.ttf');
 
 interface TrackerGridProps {

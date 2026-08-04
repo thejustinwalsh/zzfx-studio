@@ -59,13 +59,13 @@ export const WaveformPreview = React.memo(function WaveformPreview({
 
   // Derive cursor X from shared value — animates on UI thread without React re-renders
   const cursorX = useDerivedValue(() => {
-    const p = activeProgress.value;
+    const p = activeProgress.get();
     if (p == null || w <= 0) return OFFSCREEN;
     return padding + Math.max(0, Math.min(1, p)) * w;
   }, [w, padding]);
 
-  const cursorP1 = useDerivedValue(() => vec(cursorX.value, padding), [padding]);
-  const cursorP2 = useDerivedValue(() => vec(cursorX.value, padding + h), [h, padding]);
+  const cursorP1 = useDerivedValue(() => vec(cursorX.get(), padding), [padding]);
+  const cursorP2 = useDerivedValue(() => vec(cursorX.get(), padding + h), [h, padding]);
 
   if (!pathStr) return <View onLayout={onLayout} style={{ width: '100%', height }} />;
 

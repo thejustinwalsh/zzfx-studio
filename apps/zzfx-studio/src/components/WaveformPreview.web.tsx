@@ -65,13 +65,13 @@ export const WaveformPreview = React.memo(function WaveformPreview({
   }, [attack, decay, sustain, release, w, h, padding]);
 
   const cursorX = useDerivedValue(() => {
-    const p = activeProgress.value;
+    const p = activeProgress.get();
     if (p == null || w <= 0) return -100;
     return padding + Math.max(0, Math.min(1, p)) * w;
   }, [w, padding]);
 
   const cursorStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: cursorX.value }],
+    transform: [{ translateX: cursorX.get() }],
   }));
 
   if (!pathStr) return <View onLayout={onLayout} style={{ width: '100%', height }} />;

@@ -24,13 +24,13 @@ export function AnimatedPressable({
   const scale = useSharedValue(1);
 
   const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
+    transform: [{ scale: scale.get() }],
   }));
 
   const handlePressIn = useCallback(
     (e: any) => {
       if (animateScale) {
-        scale.value = withTiming(0.96, { duration: 80 });
+        scale.set(withTiming(0.96, { duration: 80 }));
       }
       onPressIn?.(e);
     },
@@ -40,7 +40,7 @@ export function AnimatedPressable({
   const handlePressOut = useCallback(
     (e: any) => {
       if (animateScale) {
-        scale.value = withSpring(1, { damping: 15, stiffness: 200 });
+        scale.set(withSpring(1, { damping: 15, stiffness: 200 }));
       }
       onPressOut?.(e);
     },

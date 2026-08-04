@@ -19,7 +19,8 @@
       "esbuild"
     ],
     "overrides": {
-      "@zzfx-studio/zzfxm": "workspace:*"
+      "@zzfx-studio/zzfxm": "workspace:*",
+      "eslint-plugin-react-hooks": "^7.1.1"
     }
   },
   "devDependencies": {

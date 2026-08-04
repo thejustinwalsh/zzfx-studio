@@ -30,5 +30,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   experiments: {
     baseUrl: process.env.EXPO_BASE_URL || '',
+    // babel-preset-expo wires babel-plugin-react-compiler in when this is set.
+    // Note it runs with panicThreshold 'NONE' in production, so a component it
+    // cannot compile is skipped silently — the react-hooks lint rules are how
+    // you find out which ones.
+    reactCompiler: true,
   },
 });

@@ -1,8 +1,8 @@
-import { useRef, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo } from 'react';
+import { useRef, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo , useState } from 'react';
 import { ZZFX } from 'zzfx';
 import { useSharedValue } from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, TextInput, View, ScrollView } from 'react-native';
+import { Dimensions, Platform, StyleSheet, Text, TextInput, View, ScrollView } from 'react-native';
 import { AnimatedPressable } from './src/components/AnimatedPressable';
 import { colors, fonts, fontSize, spacing } from './src/theme';
 import {
@@ -12,16 +12,18 @@ import {
   Oscilloscope,
   InstrumentCard,
   SequenceMatrix,
+  PatternGrid,
   ExportModal,
   LoadModal,
+  HelpModal,
   BrandTitle,
   RetroAvatar,
-  PulsingView,
   UpdateBanner,
   computeBarColors,
   prefetchHighlighter,
 } from './src/components';
 import type { ChannelNote, RGB } from './src/components';
+import type { NoteEffect , Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel } from './src/engine';
 import {
   generateSong,
   regenerateForVibe,
@@ -34,20 +36,20 @@ import {
   zzfxP,
   unlockAudio,
   AudioGraph,
-  zzfxmToNoteName,
-  drumNoteToName,
-  effectToDisplayString,
   CHROMATIC,
   SCALES,
   VIBE_CONFIG,
   codeToSong,
+  baseOctaveFromFreq,
 } from './src/engine';
+import { shareCodeFromUrl, SHARE_PARAM, shouldShowMiniPlayer, loadShareCodec, prefetchShareCodec } from './src/engine/share';
+import { EmbedPlayer } from './src/screens/EmbedPlayer';
 import { openTextFile } from './src/platform';
-import type { Song, SongLength, VibeName, NoteName, ScaleName, PatternLabel } from './src/engine';
 import type { ChannelIndex } from './src/theme/colors';
+import { buildOscColorTable } from './src/utils/oscColors';
 import { getPatternColor, getPatternLabelColor, getPatternActiveColor, getPatternActiveLabelColor, getPatternActiveBorderColor } from './src/utils/patternColors';
+import { useShallow } from 'zustand/react/shallow';
 import { useSongStore, initializeStore, useStoreHydrated } from './src/store';
-import { useState } from 'react';
 
 function pick<T>(arr: readonly T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
@@ -57,16 +59,69 @@ const VIBE_OPTIONS: VibeName[] = ['adventure', 'battle', 'dungeon', 'titleScreen
 const KEY_OPTIONS: NoteName[] = [...CHROMATIC];
 const SCALE_OPTIONS: ScaleName[] = Object.keys(SCALES) as ScaleName[];
 const LENGTH_OPTIONS: SongLength[] = ['short', 'long', 'epic'];
-const CHANNEL_NAMES = ['LEAD', 'HARM', 'BASS', 'DRUM'];
-const CHANNEL_COLORS = [colors.ch0Primary, colors.ch1Primary, colors.ch2Primary, colors.ch3Primary];
 
-// Initialize store after hydration (generates random song if none persisted)
-initializeStore();
+/**
+ * Which of the two apps this bundle is right now.
+ *
+ * Driven by height rather than by the URL: below the point where the studio can
+ * show any pattern data it stops being a studio, so a short frame gets the mini
+ * player. That makes a share link and an embed link the same link. `?embed=1`
+ * still forces it, for embedding a deliberately large player.
+ */
+function useMiniPlayer(): boolean {
+  const [height, setHeight] = useState(() =>
+    Platform.OS === 'web' && typeof window !== 'undefined'
+      ? window.innerHeight
+      : Dimensions.get('window').height
+  );
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      const sub = Dimensions.addEventListener('change', ({ window: w }) => setHeight(w.height));
+      return () => sub.remove();
+    }
+    // Resizing an iframe from the parent page changes innerHeight without
+    // firing a resize event inside the frame, so a resize listener alone misses
+    // it. A ResizeObserver on the document element catches both.
+    const update = () => setHeight(window.innerHeight);
+    update();
+    window.addEventListener('resize', update);
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+    observer?.observe(document.documentElement);
+    return () => {
+      window.removeEventListener('resize', update);
+      observer?.disconnect();
+    };
+  }, []);
+
+  return shouldShowMiniPlayer(height);
+}
+
+/**
+ * A link carrying someone else's song must not generate or persist a random one
+ * into the visitor's storage. Any other visit is an ordinary session and should
+ * initialise normally — including a session that happens to be short enough to
+ * render as the mini player.
+ */
+const HAS_SHARED_SONG =
+  Platform.OS === 'web' && typeof window !== 'undefined'
+    ? shareCodeFromUrl(window.location.href) !== null
+    : false;
+
+export default function App() {
+  const mini = useMiniPlayer();
+
+  useEffect(() => {
+    if (!HAS_SHARED_SONG) initializeStore();
+  }, []);
+
+  return mini ? <EmbedPlayer /> : <Studio />;
+}
 
 // Prefetch syntax highlighter for export modal during idle time
 prefetchHighlighter();
 
-export default function App() {
+function Studio() {
   const hydrated = useStoreHydrated();
 
   // Persisted state from store
@@ -81,11 +136,36 @@ export default function App() {
   const mutedChannels = useSongStore(s => s.mutedChannels);
   const soloChannel = useSongStore(s => s.soloChannel);
 
+  // Subscribed through the hook rather than read off getState(): calling
+  // getState() during render hands the compiler a hook as a plain value, and it
+  // stops optimising the component. getState() is kept for events, where a
+  // non-reactive read is the point.
+  //
+  // useShallow because the selector builds a new object each render. These are
+  // all actions, whose identities never change, so nothing ever re-renders from
+  // it — without the shallow compare zustand v5 would flag an uncached snapshot.
   const {
     setSong, setVibe, setKey, setScale, setBpm, setSongLength,
     setActivePattern, toggleMute, toggleSolo, updateVolume,
-    generate, loadSong, renameSong,
-  } = useSongStore.getState();
+    generate, loadSong, renameSong, commitSong,
+  } = useSongStore(
+    useShallow((s) => ({
+      setSong: s.setSong,
+      setVibe: s.setVibe,
+      setKey: s.setKey,
+      setScale: s.setScale,
+      setBpm: s.setBpm,
+      setSongLength: s.setSongLength,
+      setActivePattern: s.setActivePattern,
+      toggleMute: s.toggleMute,
+      toggleSolo: s.toggleSolo,
+      updateVolume: s.updateVolume,
+      generate: s.generate,
+      loadSong: s.loadSong,
+      renameSong: s.renameSong,
+      commitSong: s.commitSong,
+    }))
+  );
 
   // Editable song name — local state for responsive typing, debounced to store
   const [editingName, setEditingName] = useState<string | null>(null);
@@ -126,6 +206,7 @@ export default function App() {
   const [showExport, setShowExport] = useState(false);
   const exportPromiseRef = useRef<Promise<[Float32Array, Float32Array][]> | null>(null);
   const [showLoad, setShowLoad] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   // ADSR progress shared values — driven from RAF, consumed by WaveformPreview on UI thread
   const adsrProgress0 = useSharedValue<number | null>(null);
@@ -222,7 +303,7 @@ export default function App() {
   }, [getEffectiveGain]);
 
   const clearAdsrProgress = useCallback(() => {
-    for (const sv of adsrProgressValues) sv.value = null;
+    for (const sv of adsrProgressValues) sv.set(null);
   }, [adsrProgressValues]);
 
   const stopPlayback = useCallback(() => {
@@ -289,17 +370,17 @@ export default function App() {
           const totalDuration = attack + decay + sustain + release;
           if (totalDuration > 0) {
             const p = timeSinceNote / totalDuration;
-            adsrProgressValues[ci].value = p <= 1 ? Math.max(0, Math.min(1, p)) : null;
+            adsrProgressValues[ci].set(p <= 1 ? Math.max(0, Math.min(1, p)) : null);
           } else {
-            adsrProgressValues[ci].value = null;
+            adsrProgressValues[ci].set(null);
           }
         } else {
-          adsrProgressValues[ci].value = null;
+          adsrProgressValues[ci].set(null);
         }
       }
     } else {
       for (let ci = 0; ci < 4; ci++) {
-        adsrProgressValues[ci].value = null;
+        adsrProgressValues[ci].set(null);
       }
     }
 
@@ -444,15 +525,24 @@ export default function App() {
     stopPlayback();
   }, [stopPlayback]);
 
+  const previewParams = useCallback((instrument: number[]) => {
+    unlockAudio();
+    const params = [...instrument];
+    const samples = ZZFX.buildSamples(...params);
+    if (samples.length > 0) {
+      zzfxP([samples]);
+    }
+  }, []);
+
   const handleRegenPattern = useCallback((label: PatternLabel) => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong) return;
     const { pattern, effects } = regeneratePattern(currentSong, label);
-    setSong({
+    commitSong({
       ...currentSong,
       patterns: { ...currentSong.patterns, [label]: pattern },
       patternEffects: { ...currentSong.patternEffects, [label]: effects },
-    });
+    }, `regenerate pattern ${label}`);
     flashChannel([0, 1, 2, 3]);
   }, [flashChannel]);
 
@@ -466,20 +556,23 @@ export default function App() {
       patternEffects: { ...currentSong.patternEffects, [ap]: effects },
     };
 
+    // Commit before rendering, never after. Committing in the .then() reads a
+    // song from before the await and writes it back afterwards, so any edit made
+    // during the render is silently overwritten — and the overwrite lands in the
+    // undo history as though it were the user's. Note edits already commit
+    // immediately and let the audio catch up; this now matches.
+    commitSong(newSong, 'regenerate channel');
+    flashChannel([channelIndex]);
+
     if (audioGraphRef.current?.isPlaying) {
       setRenderingChannels(prev => new Set(prev).add(channelIndex));
       renderEngineRef.current.renderSongBuffers(newSong).then(buffers => {
-        setSong(newSong);
-        flashChannel([channelIndex]);
         setRenderingChannels(prev => { const next = new Set(prev); next.delete(channelIndex); return next; });
         channelBuffersRef.current[channelIndex] = buffers[channelIndex];
         audioGraphRef.current?.replaceChannel(channelIndex, buffers[channelIndex]);
       });
-    } else {
-      setSong(newSong);
-      flashChannel([channelIndex]);
     }
-  }, [flashChannel]);
+  }, [flashChannel, commitSong]);
 
   const handleRegenSingleInstrument = useCallback((channelIndex: number) => {
     const currentSong = useSongStore.getState().song;
@@ -490,28 +583,24 @@ export default function App() {
     const newSong = { ...currentSong, instruments: newInstruments };
     const newVol = newInstruments[channelIndex][0] ?? 1;
 
+    // Same read-modify-write-across-an-await hazard as regenerate channel.
+    commitSong(newSong, 'regenerate instrument');
+    previewParams(newInstruments[channelIndex]);
+    useSongStore.getState().setChannelVolumes(prev => {
+      const next = [...prev];
+      next[channelIndex] = newVol;
+      return next;
+    });
+
     if (audioGraphRef.current?.isPlaying) {
       setRenderingChannels(prev => new Set(prev).add(channelIndex));
       renderEngineRef.current.renderSongBuffers(newSong).then(buffers => {
-        setSong(newSong);
-        useSongStore.getState().setChannelVolumes(prev => {
-          const next = [...prev];
-          next[channelIndex] = newVol;
-          return next;
-        });
         setRenderingChannels(prev => { const next = new Set(prev); next.delete(channelIndex); return next; });
         channelBuffersRef.current[channelIndex] = buffers[channelIndex];
         audioGraphRef.current?.replaceChannel(channelIndex, buffers[channelIndex]);
       });
-    } else {
-      setSong(newSong);
-      useSongStore.getState().setChannelVolumes(prev => {
-        const next = [...prev];
-        next[channelIndex] = newVol;
-        return next;
-      });
     }
-  }, []);
+  }, [commitSong, previewParams]);
 
   const handleVolumeChange = useCallback((channelIndex: number, newVol: number) => {
     updateVolume(channelIndex, newVol);
@@ -530,19 +619,144 @@ export default function App() {
     }
   }, []);
 
+  // --- Pattern editing -----------------------------------------------------
+
+  // A drag fires an edit every 12px, so collapse the burst into one render.
+  const editTimersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+
+  /** Latest render ticket per channel; an older render's result is discarded. */
+  const renderGenRef = useRef<Map<number, number>>(new Map());
+
+  const scheduleChannelRerender = useCallback((channelIndex: number) => {
+    const timers = editTimersRef.current;
+    const existing = timers.get(channelIndex);
+    if (existing) clearTimeout(existing);
+
+    timers.set(channelIndex, setTimeout(() => {
+      timers.delete(channelIndex);
+      const currentSong = useSongStore.getState().song;
+      if (!currentSong) return;
+
+      // Debouncing only delays the *start* of a render. Two can still be in
+      // flight, and they do not finish in order: if an earlier one lands last
+      // it overwrites the channel with audio from before the newer edit, so
+      // the grid shows one thing and playback plays another. Each render
+      // takes a ticket and a stale one drops its result.
+      const gen = (renderGenRef.current.get(channelIndex) ?? 0) + 1;
+      renderGenRef.current.set(channelIndex, gen);
+
+      renderEngineRef.current.renderSongBuffers(currentSong).then(buffers => {
+        if (renderGenRef.current.get(channelIndex) !== gen) return;
+        if (buffers.length === 0 || buffers[0][0].length === 0) return;
+        channelBuffersRef.current[channelIndex] = buffers[channelIndex];
+        // Only hot-swap while playing; otherwise the buffers are just staged
+        // for the next play.
+        if (audioGraphRef.current?.isPlaying) {
+          audioGraphRef.current.replaceChannel(channelIndex, buffers[channelIndex]);
+        } else {
+          channelBuffersRef.current = buffers;
+        }
+      });
+    }, 120));
+  }, []);
+
+  useEffect(() => {
+    const timers = editTimersRef.current;
+    return () => {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
+
+  const handleSetNote = useCallback((channelIndex: number, row: number, note: number) => {
+    useSongStore.getState().setNote(activePattern, channelIndex, row, note);
+  }, [activePattern]);
+
+  const handleSetEffect = useCallback((channelIndex: number, row: number, effect: NoteEffect | null) => {
+    useSongStore.getState().setEffect(activePattern, channelIndex, row, effect);
+  }, [activePattern]);
+
+  // Sound a single note through its channel's instrument. Only called when
+  // playback is stopped — during playback the swapped buffer delivers the edit.
+  const handleAuditionNote = useCallback((channelIndex: number, note: number) => {
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong || note <= 0) return;
+    unlockAudio();
+    const params = [...currentSong.instruments[channelIndex]];
+    params[2] *= 2 ** ((note - 12) / 12);
+    const samples = ZZFX.buildSamples(...params);
+    if (samples.length > 0) zzfxP([samples]);
+  }, []);
+
+  // A shared link carries the whole song in its query string. Load it once on
+  // startup, then strip the parameter so a refresh does not keep reimporting
+  // the same song as a new project.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const code = shareCodeFromUrl(window.location.href);
+    if (!code) return;
+
+    let cancelled = false;
+    // The codec only loads because this URL carries a song.
+    loadShareCodec().then(({ songFromShareCode }) => songFromShareCode(code)).then((shared) => {
+      if (cancelled || !shared) return;
+      useSongStore.getState().loadSong(shared);
+    }).finally(() => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete(SHARE_PARAM);
+      window.history.replaceState({}, '', url.toString());
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Undo replaces the whole song, so every channel's audio is stale.
+  const rerenderAllChannels = useCallback(() => {
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
+    renderEngineRef.current.renderSongBuffers(currentSong).then(buffers => {
+      if (buffers.length === 0 || buffers[0][0].length === 0) return;
+      channelBuffersRef.current = buffers;
+      if (audioGraphRef.current?.isPlaying) {
+        const songDuration = buffers[0][0].length / 44100;
+        audioGraphRef.current.replaceAllChannels(
+          buffers,
+          songDuration,
+          useSongStore.getState().song?.config.bpm ?? 120
+        );
+      }
+    });
+  }, []);
+
+  // Undo/redo is global rather than grid-scoped — it also covers the
+  // regenerate buttons, which are reachable without ever focusing the grid.
+  const handleHistoryKey = useEffectEvent((e: KeyboardEvent) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod || e.key.toLowerCase() !== 'z') return false;
+    // The song name is an editable field; inside it, undo belongs to the text.
+    const target = e.target as HTMLElement | null;
+    if (target?.isContentEditable) return false;
+    const tag = target?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return false;
+    const { undo, redo } = useSongStore.getState();
+    const moved = e.shiftKey ? redo() : undo();
+    if (moved) rerenderAllChannels();
+    return true;
+  });
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (handleHistoryKey(e)) e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const handlePreviewInstrument = useCallback((channelIndex: number) => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong) return;
-    unlockAudio();
-    const params = [...currentSong.instruments[channelIndex]];
-    if (channelIndex === 3) {
-      params[2] *= 2 ** ((12 - 12) / 12);
-    }
-    const samples = ZZFX.buildSamples(...params);
-    if (samples.length > 0) {
-      zzfxP([samples]);
-    }
-  }, []);
+    previewParams(currentSong.instruments[channelIndex]);
+  }, [previewParams]);
 
   // Export / Import
   const handleImport = useCallback(async () => {
@@ -571,12 +785,16 @@ export default function App() {
     };
   }, []);
 
+  const baseOctaves = useMemo(
+    () => (song?.instruments ?? []).map(p => baseOctaveFromFreq(p[2])),
+    [song?.instruments]
+  );
+
   const currentPattern = song && song.patterns[activePattern];
   const currentEffects = song?.patternEffects?.[activePattern];
 
   // Grid scroll measurement refs
   const gridScrollHeight = useRef(0);
-  const gridContentHeight = useRef(0);
 
   // Scroll grid after React renders the new cursor position, before browser paints
   useLayoutEffect(() => {
@@ -593,81 +811,11 @@ export default function App() {
   const BAR_COUNT = 64;
   const oscColorTable = useMemo(() => {
     if (!song || !currentPattern) return null;
-
-    const rowDuration = 60 / song.config.bpm / 4;
-    const analyser = audioGraphRef.current?.getAnalyser();
-    const sampleRate = analyser?.context?.sampleRate;
-    const fftSize = analyser?.fftSize;
-
-    const ctx = analyser?.context as AudioContext | undefined;
-    const audioLatency = (ctx?.baseLatency ?? 0) + (ctx?.outputLatency ?? 0);
-
-    const envelopes = song.instruments.map(params => ({
-      attack: params[3] ?? 0,
-      sustain: params[4] ?? 0,
-      release: params[5] ?? 0,
-      decay: params[18] ?? 0,
-    }));
-
-    const channelNoteMap: (ChannelNote | null)[][] = Array.from({ length: 32 }, () => []);
-
-    for (let row = 0; row < 32; row++) {
-      for (let ch = 0; ch < 4; ch++) {
-        let foundNote = 0;
-        let noteRow = -1;
-        for (let r = row; r >= 0; r--) {
-          const val = currentPattern[ch][r + 2];
-          if (val > 0) {
-            foundNote = val;
-            noteRow = r;
-            break;
-          }
-        }
-
-        if (foundNote <= 0 || noteRow < 0) {
-          channelNoteMap[row].push(null);
-          continue;
-        }
-
-        const elapsed = (row - noteRow) * rowDuration + audioLatency;
-        const env = envelopes[ch];
-        const adsrDuration = env.attack + env.decay + env.sustain + env.release;
-
-        const visualTail = 0.3;
-        const minVisualDuration = 0.4;
-        const totalVisualDuration = Math.max(adsrDuration + visualTail, minVisualDuration);
-
-        if (elapsed > totalVisualDuration) {
-          channelNoteMap[row].push(null);
-          continue;
-        }
-
-        let amp = 1.0;
-        if (elapsed < env.attack) {
-          amp = elapsed / Math.max(env.attack, 0.001);
-        } else if (elapsed < env.attack + env.decay) {
-          amp = 1.0;
-        } else if (elapsed < env.attack + env.decay + env.sustain) {
-          amp = 0.8;
-        } else if (elapsed < adsrDuration) {
-          const releaseElapsed = elapsed - (env.attack + env.decay + env.sustain);
-          amp = Math.max(0, 0.8 * (1 - releaseElapsed / Math.max(env.release, 0.001)));
-        } else {
-          const tailElapsed = elapsed - adsrDuration;
-          const tailProgress = tailElapsed / visualTail;
-          amp = 0.3 * (1 - tailProgress * tailProgress);
-        }
-
-        const baseFreq = song.instruments[ch][2] ?? 261.63;
-        const frequency = baseFreq * Math.pow(2, (foundNote - 12) / 12);
-        const shape = song.instruments[ch][6] ?? 0;
-        const baseWeight = ch === 3 ? 0.35 : 1.0;
-        channelNoteMap[row].push({ frequency, shape, weight: baseWeight * amp });
-      }
-    }
-
-    return channelNoteMap.map(notes =>
-      computeBarColors(notes, BAR_COUNT, sampleRate, fftSize)
+    return buildOscColorTable(
+      song,
+      currentPattern,
+      BAR_COUNT,
+      audioGraphRef.current?.getAnalyser()
     );
   }, [song, currentPattern]);
 
@@ -753,6 +901,9 @@ export default function App() {
                   if (song && renderEngineRef.current) {
                     exportPromiseRef.current = renderEngineRef.current.renderSongBuffers(song);
                   }
+                  // Fetch the share codec while the export screen is being
+                  // read, so the first press of share does not wait on it.
+                  prefetchShareCodec();
                   setShowExport(true);
                 }}
                 style={styles.actionBtn}
@@ -760,6 +911,14 @@ export default function App() {
                 accessibilityLabel="Export song"
               >
                 <Text style={styles.actionBtnText}>EXPORT</Text>
+              </AnimatedPressable>
+              <AnimatedPressable
+                onPress={() => setShowHelp(true)}
+                style={styles.actionBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Keyboard shortcuts"
+              >
+                <Text style={styles.actionBtnText}>?</Text>
               </AnimatedPressable>
             </View>
           </View>
@@ -838,143 +997,39 @@ export default function App() {
 
       {/* Pattern Data Grid */}
       {currentPattern ? (
-        <ScrollView
-          ref={gridScrollRef}
-          style={styles.gridContainer}
-          stickyHeaderIndices={[0]}
-          onLayout={(e) => { gridScrollHeight.current = e.nativeEvent.layout.height; }}
-          onContentSizeChange={(_w, h) => { gridContentHeight.current = h; }}
-        >
-          {/* Channel Headers with Regen */}
-          <View style={styles.gridHeader} onLayout={(e) => { gridHeaderHeight.current = e.nativeEvent.layout.height; }}>
-            <View style={styles.rowNumCol}>
-              <Text style={styles.headerText}>ROW</Text>
-            </View>
-            {CHANNEL_NAMES.map((name, ci) => {
-              const isMuted = effectiveMutes.has(ci);
-              const isSoloed = soloChannel === ci;
-              const isExplicitMuted = mutedChannels.includes(ci);
-              return (
-                <View key={name} style={styles.channelCol}>
-                  <View style={styles.channelHeaderRow}>
-                    <Text style={[
-                      styles.headerText,
-                      { color: isMuted ? colors.textDim : CHANNEL_COLORS[ci] },
-                    ]}>
-                      {name}
-                    </Text>
-                    <View style={styles.headerBtnGroup}>
-                      <AnimatedPressable
-                        onPress={() => toggleMute(ci)}
-                        style={[
-                          styles.toggleBtn,
-                          isExplicitMuted && styles.toggleBtnMuted,
-                        ]}
-                        accessibilityRole="button"
-                        accessibilityLabel={`${isExplicitMuted ? 'Unmute' : 'Mute'} ${name} channel`}
-                        accessibilityState={{ selected: isExplicitMuted }}
-                      >
-                        <Text style={[
-                          styles.toggleText,
-                          isExplicitMuted && styles.toggleTextActive,
-                        ]}>M</Text>
-                      </AnimatedPressable>
-                      <AnimatedPressable
-                        onPress={() => toggleSolo(ci)}
-                        style={[
-                          styles.toggleBtn,
-                          isSoloed && styles.toggleBtnSoloed,
-                        ]}
-                        accessibilityRole="button"
-                        accessibilityLabel={`${isSoloed ? 'Unsolo' : 'Solo'} ${name} channel`}
-                        accessibilityState={{ selected: isSoloed }}
-                      >
-                        <Text style={[
-                          styles.toggleText,
-                          isSoloed && styles.toggleTextSoloed,
-                        ]}>S</Text>
-                      </AnimatedPressable>
-                      <PulsingView active={renderingChannels.has(ci)}>
-                        <AnimatedPressable
-                          onPress={() => handleRegenChannel(ci)}
-                          disabled={renderingChannels.has(ci)}
-                          style={[
-                            styles.regenBtn,
-                            flashChannels.has(ci) && styles.regenFlash,
-                          ]}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Regenerate ${name} channel`}
-                        >
-                          <Text style={styles.regenText}>R</Text>
-                        </AnimatedPressable>
-                      </PulsingView>
-                    </View>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-
-          {/* Grid Rows */}
-          {Array.from({ length: 32 }, (_, row) => {
-            const isBeat = row % 8 === 0;
-            const isCursor = row === playbackRow;
-            return (
-              <View
-                key={row}
-                onLayout={row === 0 ? (e) => { gridRowHeight.current = e.nativeEvent.layout.height; } : undefined}
-                style={[
-                  styles.gridRow,
-                  isBeat && styles.gridRowBeat,
-                  row % 2 === 0 && styles.gridRowAlt,
-                  isCursor && styles.gridRowCursor,
-                ]}
-              >
-                <View style={styles.rowNumCol}>
-                  <Text style={[
-                    styles.rowNum,
-                    isBeat && styles.rowNumBeat,
-                    isCursor && styles.rowNumCursor,
-                  ]}>
-                    {row.toString(16).toUpperCase().padStart(2, '0')}
-                  </Text>
-                </View>
-                {currentPattern.map((channel, ci) => {
-                  const noteVal = channel[row + 2];
-                  const noteName = ci === 3
-                    ? drumNoteToName(noteVal)
-                    : zzfxmToNoteName(noteVal);
-                  const fx = currentEffects?.[ci]?.[row];
-                  const fxStr = effectToDisplayString(fx);
-                  const isFlashing = flashChannels.has(ci);
-                  const noteColor = noteVal > 0
-                    ? (effectiveMutes.has(ci) ? colors.textDim : CHANNEL_COLORS[ci])
-                    : colors.textDim;
-                  return (
-                    <View
-                      key={ci}
-                      style={[
-                        styles.channelCol,
-                        isFlashing && styles.channelFlash,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.noteText,
-                          isCursor && noteVal > 0 && styles.noteTextCursor,
-                        ]}
-                      >
-                        <Text style={{ color: noteColor }}>{noteName}</Text>
-                        <Text style={{ color: fx ? noteColor : colors.textDim }}>{` ${fxStr}`}</Text>
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-            );
-          })}
-        </ScrollView>
+        <PatternGrid
+          pattern={currentPattern}
+          effects={currentEffects}
+          patternLabel={activePattern}
+          baseOctaves={baseOctaves}
+          songKey={song!.config.key}
+          scale={song!.config.scale}
+          playbackRow={playbackRow}
+          mutedChannels={effectiveMutes}
+          explicitMutes={mutedChannels}
+          soloChannel={soloChannel}
+          renderingChannels={renderingChannels}
+          flashChannels={flashChannels}
+          onToggleMute={toggleMute}
+          onToggleSolo={toggleSolo}
+          onRegenChannel={handleRegenChannel}
+          onSetNote={handleSetNote}
+          onSetEffect={handleSetEffect}
+          onEdit={scheduleChannelRerender}
+          onAudition={handleAuditionNote}
+          onBeginEdit={useSongStore.getState().beginEdit}
+          onEndEdit={useSongStore.getState().endEdit}
+          isPlaying={isPlaying}
+          onScrollRef={(r) => { gridScrollRef.current = r; }}
+          onLayoutMetrics={(m) => {
+            gridRowHeight.current = m.rowHeight;
+            gridHeaderHeight.current = m.headerHeight;
+            gridScrollHeight.current = m.viewportHeight;
+          }}
+        />
       ) : null}
+
+      <HelpModal visible={showHelp} onClose={() => setShowHelp(false)} />
 
       {/* Load Modal */}
       <LoadModal
@@ -1128,128 +1183,5 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: colors.borderSubtle,
-  },
-  gridContainer: {
-    flex: 1,
-    paddingHorizontal: spacing.md,
-  },
-  gridHeader: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderTrack,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.bgPrimary,
-    zIndex: 1,
-  },
-  rowNumCol: {
-    width: 36,
-    paddingHorizontal: spacing.xs,
-  },
-  channelCol: {
-    flex: 1,
-    paddingHorizontal: spacing.xs,
-  },
-  channelHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 3,
-  },
-  headerText: {
-    fontFamily: fonts.mono,
-    fontSize: fontSize.trackHeader,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    letterSpacing: 0.5,
-  },
-  headerBtnGroup: {
-    flexDirection: 'row',
-    gap: 2,
-    alignItems: 'center',
-  },
-  toggleBtn: {
-    width: 18,
-    height: 18,
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-    borderWidth: 1,
-    borderColor: colors.borderSubtle,
-  },
-  toggleBtnMuted: {
-    borderColor: colors.accentStop,
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
-  },
-  toggleBtnSoloed: {
-    borderColor: colors.accentPlay,
-    backgroundColor: 'rgba(34, 197, 94, 0.15)',
-  },
-  toggleText: {
-    fontFamily: fonts.mono,
-    fontSize: 9,
-    fontWeight: '700',
-    color: colors.textDim,
-  },
-  toggleTextActive: {
-    color: colors.accentStop,
-  },
-  toggleTextSoloed: {
-    color: colors.accentPlay,
-  },
-  regenBtn: {
-    width: 18,
-    height: 18,
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-    borderWidth: 1,
-    borderColor: colors.accentGenerate,
-  },
-  regenText: {
-    fontFamily: fonts.mono,
-    fontSize: 9,
-    color: colors.accentGenerate,
-    fontWeight: '700',
-  },
-  regenFlash: {
-    backgroundColor: colors.accentGenerate,
-    borderColor: colors.accentGenerate,
-  },
-  gridRow: {
-    flexDirection: 'row',
-    paddingVertical: 1,
-    backgroundColor: colors.bgGridRow,
-  },
-  gridRowAlt: {
-    backgroundColor: colors.bgGridRowAlt,
-  },
-  gridRowBeat: {
-    backgroundColor: colors.bgGridBeat,
-  },
-  gridRowCursor: {
-    backgroundColor: colors.bgCursor,
-    borderLeftWidth: 2,
-    borderLeftColor: colors.accentPrimary,
-  },
-  rowNum: {
-    fontFamily: fonts.mono,
-    fontSize: fontSize.gridRowNum,
-    color: colors.textDim,
-  },
-  rowNumBeat: {
-    color: colors.textSecondary,
-  },
-  rowNumCursor: {
-    color: colors.accentPrimary,
-    fontWeight: '700',
-  },
-  noteText: {
-    fontFamily: fonts.mono,
-    fontSize: fontSize.gridNote,
-    paddingHorizontal: 3,
-  },
-  noteTextCursor: {
-    fontWeight: '700',
-  },
-  channelFlash: {
-    backgroundColor: 'rgba(168, 85, 247, 0.15)',
   },
 });
