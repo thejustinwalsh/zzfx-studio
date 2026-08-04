@@ -13,7 +13,14 @@ export { PatternGrid, GRID_ROWS } from './PatternGrid';
 export { ExportModal, prefetchHighlighter } from './ExportModal';
 export { LoadModal } from './LoadModal';
 export { HelpModal } from './HelpModal';
+export { MidiModal } from './MidiModal';
+export { MidiIcon } from './MidiIcon';
 export { BrandTitle } from './BrandTitle/BrandTitle';
 export { RetroAvatar } from './RetroAvatar';
 export { PulsingView } from './PulsingView';
 export { UpdateBanner } from './UpdateBanner';
+
+// Design-system showcase components. Not used by the app itself, but they
+// have to typecheck like everything else.
+export { TrackerGrid } from './TrackerGrid';
+export { WaveformPreview } from './WaveformPreview';

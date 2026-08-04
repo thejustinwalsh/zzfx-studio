@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, PanResponder } from 'react-native';
 import { PulsingView } from './PulsingView';
 import type { SharedValue } from 'react-native-reanimated';
@@ -49,46 +49,38 @@ export function InstrumentCard({
 
   // Volume slider (0–1 range)
   const trackRef = useRef<View>(null);
-  const trackLayout = useRef({ x: 0, width: 0 });
+  /**
+   * The track's position on screen, as state.
+   *
+   * It was a ref, read by the gesture handlers. The compiler taints anything
+   * that reaches a ref transitively, so building the responder during render
+   * took the whole component out of compilation however the access was
+   * indirected. Nothing on this path touches a ref now, and the value only
+   * changes on layout, so the responder is rebuilt about as often as never.
+   */
+  const [track, setTrack] = useState({ x: 0, width: 0 });
   const fraction = Math.max(0, Math.min(1, volume));
 
-  // Use refs to avoid stale closures in PanResponder
-  const onVolumeChangeRef = useRef(onVolumeChange);
-  onVolumeChangeRef.current = onVolumeChange;
-
   const volFromPageX = useCallback((pageX: number) => {
-    const { x, width } = trackLayout.current;
-    if (width <= 0) return 0;
-    const frac = Math.max(0, Math.min(1, (pageX - x) / width));
+    if (track.width <= 0) return 0;
+    const frac = Math.max(0, Math.min(1, (pageX - track.x) / track.width));
     return Math.round(frac * 100) / 100;
-  }, []);
+  }, [track]);
 
-  const panResponder = useRef(
-    PanResponder.create({
+  const panResponder = useMemo(() => {
+    const apply = (pageX: number) => onVolumeChange(volFromPageX(pageX));
+    return PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (evt) => {
-        // Measure track position for accurate pageX→fraction mapping
-        const el = trackRef.current as any;
-        if (el?.measureInWindow) {
-          el.measureInWindow((x: number, _y: number, w: number) => {
-            trackLayout.current = { x, width: w };
-            // Re-compute with fresh measurement
-            onVolumeChangeRef.current(volFromPageX(evt.nativeEvent.pageX));
-          });
-        }
-        // Also compute with existing layout (may be stale on very first touch)
-        onVolumeChangeRef.current(volFromPageX(evt.nativeEvent.pageX));
-      },
-      onPanResponderMove: (evt) => {
-        onVolumeChangeRef.current(volFromPageX(evt.nativeEvent.pageX));
-      },
-    })
-  ).current;
+      onPanResponderGrant: (evt) => apply(evt.nativeEvent.pageX),
+      onPanResponderMove: (evt) => apply(evt.nativeEvent.pageX),
+    });
+  }, [onVolumeChange, volFromPageX]);
 
+  // Measured after layout, which is also the only time it can change.
   const onTrackLayout = useCallback(() => {
     (trackRef.current as any)?.measureInWindow?.((x: number, _y: number, w: number) => {
-      trackLayout.current = { x, width: w };
+      setTrack((prev) => (prev.x === x && prev.width === w ? prev : { x, width: w }));
     });
   }, []);
 

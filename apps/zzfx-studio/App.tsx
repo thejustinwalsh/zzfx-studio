@@ -13,9 +13,12 @@ import {
   InstrumentCard,
   SequenceMatrix,
   PatternGrid,
+  GRID_ROWS,
   ExportModal,
   LoadModal,
   HelpModal,
+  MidiModal,
+  MidiIcon,
   BrandTitle,
   RetroAvatar,
   UpdateBanner,
@@ -41,8 +44,13 @@ import {
   VIBE_CONFIG,
   codeToSong,
   baseOctaveFromFreq,
+  DEFAULT_BASE_OCTAVE,
+  applyEffect,
 } from './src/engine';
 import { shareCodeFromUrl, SHARE_PARAM, shouldShowMiniPlayer, loadShareCodec, prefetchShareCodec } from './src/engine/share';
+import { loadMidi } from './src/engine/midiLoader';
+import { toggleArmed } from './src/engine/arming';
+import { useLaunchpad } from './src/hooks/useLaunchpad';
 import { EmbedPlayer } from './src/screens/EmbedPlayer';
 import { openTextFile } from './src/platform';
 import type { ChannelIndex } from './src/theme/colors';
@@ -59,6 +67,9 @@ const VIBE_OPTIONS: VibeName[] = ['adventure', 'battle', 'dungeon', 'titleScreen
 const KEY_OPTIONS: NoteName[] = [...CHROMATIC];
 const SCALE_OPTIONS: ScaleName[] = Object.keys(SCALES) as ScaleName[];
 const LENGTH_OPTIONS: SongLength[] = ['short', 'long', 'epic'];
+
+/** Drums live on channel 3, and are the one channel whose notes pick a voice. */
+const DRUM_CHANNEL = 3;
 
 /**
  * Which of the two apps this bundle is right now.
@@ -204,9 +215,28 @@ function Studio() {
   const [flashChannels, setFlashChannels] = useState<Set<number>>(new Set());
   const [renderingChannels, setRenderingChannels] = useState<Set<number>>(new Set());
   const [showExport, setShowExport] = useState(false);
-  const exportPromiseRef = useRef<Promise<[Float32Array, Float32Array][]> | null>(null);
+  // State, not a ref: it is read while rendering the export modal, and a ref
+  // read there makes the compiler skip this component.
+  const [exportPromise, setExportPromise] =
+    useState<Promise<[Float32Array, Float32Array][]> | null>(null);
   const [showLoad, setShowLoad] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+
+  // MIDI. The module is loaded on demand — requesting access needs a user
+  // gesture anyway, and most sessions never touch a controller.
+  const [showMidi, setShowMidi] = useState(false);
+  const [midiWanted, setMidiWanted] = useState(false);
+  const [midiEnabled, setMidiEnabled] = useState(false);
+  const [midiDevices, setMidiDevices] = useState<{ id: string; name: string; manufacturer: string }[]>([]);
+  const [midiError, setMidiError] = useState<string | null>(null);
+  const [armedChannels, setArmedChannels] = useState<number[]>([0]);
+  // Lifted out of the grid so the Launchpad's arrows and the grid's own octave
+  // button move the same register rather than disagreeing about it.
+  const [octave, setOctave] = useState(DEFAULT_BASE_OCTAVE);
+  const midiSessionRef = useRef<{ dispose(): void } | null>(null);
+  const midiSupported = Platform.OS === 'web'
+    && typeof navigator !== 'undefined'
+    && 'requestMIDIAccess' in navigator;
 
   // ADSR progress shared values — driven from RAF, consumed by WaveformPreview on UI thread
   const adsrProgress0 = useSharedValue<number | null>(null);
@@ -223,17 +253,27 @@ function Studio() {
   const renderEngineRef = useRef(createRenderEngine());
   const channelBuffersRef = useRef<([number[] | Float32Array, number[] | Float32Array])[]>([]);
   const renderSeqRef = useRef(0); // Monotonic counter — only used for BPM debounce
-  const rafRef = useRef<number>(0);
   const bpmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const volTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gridScrollRef = useRef<ScrollView>(null);
   const gridRowHeight = useRef(0);
   const gridHeaderHeight = useRef(0);
 
+  /**
+   * The analyser, as state rather than reached for through the graph ref.
+   *
+   * The oscilloscope and the colour table both need it while rendering, and a
+   * ref read during render is invisible to the compiler: it bails out of the
+   * whole component, so nothing here gets memoised at all. The node is created
+   * once with the graph and never replaced, so state models it exactly.
+   */
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
+
   // Lazy-init AudioGraph
   const getAudioGraph = useCallback(() => {
     if (!audioGraphRef.current) {
       audioGraphRef.current = new AudioGraph();
+      setAnalyser(audioGraphRef.current.getAnalyser());
     }
     return audioGraphRef.current;
   }, []);
@@ -306,6 +346,11 @@ function Studio() {
     for (const sv of adsrProgressValues) sv.set(null);
   }, [adsrProgressValues]);
 
+  // Declared before stopPlayback reads them. The compiler follows source order
+  // and cannot see that these only run after mount.
+  const prevRowRef = useRef<number | null>(null);
+  const prevPatIdxRef = useRef<number | null>(null);
+
   const stopPlayback = useCallback(() => {
     audioGraphRef.current?.stop();
     setIsPlaying(false);
@@ -313,15 +358,21 @@ function Studio() {
     prevRowRef.current = null;
     prevPatIdxRef.current = null;
     clearAdsrProgress();
-    cancelAnimationFrame(rafRef.current);
   }, [clearAdsrProgress]);
 
-  // Playback position tracking via RAF using AudioGraph's audio clock
-  // Track previous values to avoid unnecessary React re-renders
-  const prevRowRef = useRef<number | null>(null);
-  const prevPatIdxRef = useRef<number | null>(null);
+  // Playback position tracking via RAF using AudioGraph's audio clock.
 
-  const updatePlaybackPosition = useCallback(() => {
+  /**
+   * One frame of playback position.
+   *
+   * An effect event, not a callback. It rescheduled itself, which is a
+   * self-reference the compiler rejects outright ("cannot access variable
+   * before it is declared") and which takes the whole component out of
+   * compilation with it. As an effect event the body always sees current state
+   * without being a dependency of anything, and the loop that drives it lives
+   * in the effect below.
+   */
+  const updatePlaybackPosition = useEffectEvent(() => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong || !audioGraphRef.current) return;
     const ag = audioGraphRef.current;
@@ -384,8 +435,25 @@ function Studio() {
       }
     }
 
-    rafRef.current = requestAnimationFrame(updatePlaybackPosition);
-  }, [adsrProgressValues]);
+  });
+
+  /**
+   * The frame loop.
+   *
+   * Owned by an effect keyed on isPlaying, so starting and stopping playback no
+   * longer has to remember to schedule or cancel it by hand, and an unmount
+   * mid-playback cannot leave a frame callback running.
+   */
+  useEffect(() => {
+    if (!isPlaying) return;
+    let raf = 0;
+    const loop = () => {
+      updatePlaybackPosition();
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying]);
 
   // Generation flash effect
   const flashChannel = useCallback((channels: number[]) => {
@@ -498,7 +566,6 @@ function Studio() {
 
     if (ag.isPlaying) {
       ag.stop();
-      cancelAnimationFrame(rafRef.current);
     }
 
     // Use pre-rendered buffers if available, otherwise render now
@@ -517,9 +584,9 @@ function Studio() {
       ag.setChannelGain(ch, getEffectiveGain(ch));
     }
 
+    // The frame loop starts itself: its effect is keyed on isPlaying.
     setIsPlaying(true);
-    rafRef.current = requestAnimationFrame(updatePlaybackPosition);
-  }, [updatePlaybackPosition, getEffectiveGain, getAudioGraph]);
+  }, [getEffectiveGain, getAudioGraph]);
 
   const handleStop = useCallback(() => {
     stopPlayback();
@@ -678,13 +745,18 @@ function Studio() {
 
   // Sound a single note through its channel's instrument. Only called when
   // playback is stopped — during playback the swapped buffer delivers the edit.
-  const handleAuditionNote = useCallback((channelIndex: number, note: number) => {
+  const handleAuditionNote = useCallback((
+    channelIndex: number, note: number, effect: NoteEffect | null = null
+  ) => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong || note <= 0) return;
     unlockAudio();
     const params = [...currentSong.instruments[channelIndex]];
-    params[2] *= 2 ** ((note - 12) / 12);
-    const samples = ZZFX.buildSamples(...params);
+    // Voice, then effect, then pitch — the order expandSong uses. Any other
+    // order and the pad sounds unlike the note it just wrote.
+    const withFx = effect ? applyEffect(params, effect) : params;
+    withFx[2] *= 2 ** ((note - 12) / 12);
+    const samples = ZZFX.buildSamples(...withFx);
     if (samples.length > 0) zzfxP([samples]);
   }, []);
 
@@ -752,6 +824,158 @@ function Studio() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  /**
+   * A note arriving from a controller.
+   *
+   * Stopped, it just sounds. Playing, it is written into the grid at the row
+   * nearest the playhead — so there is no separate record button, and undo
+   * covers a wrong take. Kept as an effect event so it always sees the current
+   * armed set and playhead without re-binding the MIDI listener.
+   */
+  const handleMidiNote = useEffectEvent((event: {
+    type: 'noteon' | 'noteoff'; channel: number; note: number; velocity: number;
+  }) => {
+    if (event.type !== 'noteon') return;
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
+
+    void loadMidi().then(({ routeToChannels, midiNoteToZzfxm, quantizeToRow }) => {
+      for (const ch of routeToChannels(armedChannels, event.channel)) {
+        const base = baseOctaveFromFreq(currentSong.instruments[ch]?.[2] ?? 261.63);
+        // Outside the range — dropped, not clamped. `continue`, not `return`:
+        // the channels are tuned differently, so a note the bass cannot reach
+        // is often perfectly playable on the lead, and returning here would
+        // silently drop every armed channel after the first that refused it.
+        const value = midiNoteToZzfxm(event.note, base);
+        if (value === null) continue;
+
+        if (audioGraphRef.current?.isPlaying) {
+          const row = quantizeToRow(
+            audioGraphRef.current.getPosition(),
+            currentSong.config.bpm,
+            GRID_ROWS
+          );
+          const label = useSongStore.getState().activePattern;
+          useSongStore.getState().setNote(label, ch, row, value);
+          scheduleChannelRerender(ch);
+        } else {
+          handleAuditionNote(ch, value);
+        }
+      }
+    });
+  });
+
+  const enableMidi = useCallback(() => {
+    setMidiError(null);
+    setMidiWanted(true);
+  }, []);
+
+  const disableMidi = useCallback(() => setMidiWanted(false), []);
+
+  /**
+   * Connect and disconnect.
+   *
+   * Driven by a flag rather than done in the button's handler, for two reasons.
+   * `handleMidiNote` is an effect event and those may only be reached from an
+   * effect. And the handler could be entered twice while the permission prompt
+   * was still open: each call installed listeners but only the last was stored,
+   * so disconnect disposed one session and left the other running, doubling
+   * every note. An unmount during the prompt was worse — cleanup saw a null ref
+   * and the session that arrived afterwards was never disposed at all.
+   *
+   * A flag collapses repeats into one effect run, and the cancelled path
+   * disposes a session that arrives too late.
+   */
+  useEffect(() => {
+    if (!midiWanted) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const { startMidi } = await loadMidi();
+        if (cancelled) return;
+        const session = await startMidi(handleMidiNote, (devices) => setMidiDevices(devices));
+        if (cancelled) {
+          session.dispose();
+          return;
+        }
+        midiSessionRef.current = session;
+        setMidiDevices(session.devices);
+        setMidiEnabled(true);
+      } catch (err) {
+        if (cancelled) return;
+        setMidiError(err instanceof Error ? err.message : 'Could not reach MIDI');
+        setMidiWanted(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      midiSessionRef.current?.dispose();
+      midiSessionRef.current = null;
+      setMidiEnabled(false);
+      setMidiDevices([]);
+    };
+  }, [midiWanted]);
+
+  const toggleArm = useCallback((ch: number) => {
+    // The arm column on the device and the on-screen buttons share this, so
+    // both toggle exactly one channel and agree about the result.
+    setArmedChannels((prev) => toggleArmed(prev, ch));
+  }, []);
+
+  /**
+   * A Launchpad pad played a note.
+   *
+   * The pad already carries a ZzFXM note for its own channel, so unlike a
+   * keyboard there is nothing to convert — the quadrant chose the channel and
+   * the layout table chose the note.
+   *
+   * Every pad sounds, armed or not: the quadrant is the routing, so refusing to
+   * play would just make half the grid feel broken. Arming decides whether a
+   * note is also written down, which is what the dimmer quadrants on the device
+   * are telling you — press one during playback and you hear it without
+   * committing it.
+   */
+  const handleLaunchpadNote = useCallback((
+    channel: number, note: number, _velocity: number, effect: NoteEffect | null = null
+  ) => {
+    const currentSong = useSongStore.getState().song;
+    if (!currentSong) return;
+
+    if (audioGraphRef.current?.isPlaying && armedChannels.includes(channel)) {
+      void loadMidi().then(({ quantizeToRow }) => {
+        const graph = audioGraphRef.current;
+        if (!graph) return;
+        const row = quantizeToRow(graph.getPosition(), currentSong.config.bpm, GRID_ROWS);
+        const label = useSongStore.getState().activePattern;
+        useSongStore.getState().setNote(label, channel, row, note);
+        // A drum pad carries its effect, so recording one writes both — which
+        // is exactly what the grid stores anyway.
+        useSongStore.getState().setEffect(label, channel, row, effect);
+        scheduleChannelRerender(channel);
+      });
+    } else {
+      handleAuditionNote(channel, note, effect);
+    }
+  }, [scheduleChannelRerender, handleAuditionNote, armedChannels]);
+
+  const handleLaunchpadPattern = useCallback((index: number) => {
+    const label = useSongStore.getState().song?.patternOrder?.[index];
+    if (label) setActivePattern(label);
+  }, [setActivePattern]);
+
+  const launchpad = useLaunchpad({
+    song,
+    activePattern,
+    armedChannels,
+    onNote: handleLaunchpadNote,
+    onSelectPattern: handleLaunchpadPattern,
+    onToggleArm: toggleArm,
+    octave,
+    onOctaveChange: setOctave,
+  });
+
   const handlePreviewInstrument = useCallback((channelIndex: number) => {
     const currentSong = useSongStore.getState().song;
     if (!currentSong) return;
@@ -778,7 +1002,6 @@ function Studio() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      cancelAnimationFrame(rafRef.current);
       audioGraphRef.current?.stop();
       if (volTimerRef.current) clearTimeout(volTimerRef.current);
       if (nameTimerRef.current) clearTimeout(nameTimerRef.current);
@@ -815,9 +1038,9 @@ function Studio() {
       song,
       currentPattern,
       BAR_COUNT,
-      audioGraphRef.current?.getAnalyser()
+      analyser
     );
-  }, [song, currentPattern]);
+  }, [song, currentPattern, analyser]);
 
   if (!hydrated) {
     return (
@@ -871,6 +1094,24 @@ function Studio() {
           <Dropdown label="SCALE" value={scale} options={SCALE_OPTIONS} onSelect={(v) => handleScaleChange(v as ScaleName)} />
           <Dropdown label="LENGTH" value={songLength} options={LENGTH_OPTIONS} onSelect={(v) => handleLengthChange(v as SongLength)} />
           <Slider label="BPM" value={bpm} min={80} max={180} step={1} onValueChange={setBpm} />
+          {midiSupported && (
+            <AnimatedPressable
+              onPress={() => setShowMidi(true)}
+              style={[styles.midiBtn, midiEnabled && styles.midiBtnOn]}
+              accessibilityRole="button"
+              accessibilityLabel={
+                midiEnabled
+                  ? `MIDI connected, ${midiDevices.length} input${midiDevices.length === 1 ? '' : 's'}`
+                  : 'MIDI settings'
+              }
+            >
+              <MidiIcon
+                size={22}
+                color={midiEnabled ? colors.accentPrimary : colors.textSecondary}
+              />
+              <Text style={[styles.midiBtnText, midiEnabled && styles.midiBtnTextOn]}>MIDI</Text>
+            </AnimatedPressable>
+          )}
         </View>
       </View>
 
@@ -899,7 +1140,7 @@ function Studio() {
               <AnimatedPressable
                 onPress={() => {
                   if (song && renderEngineRef.current) {
-                    exportPromiseRef.current = renderEngineRef.current.renderSongBuffers(song);
+                    setExportPromise(renderEngineRef.current.renderSongBuffers(song));
                   }
                   // Fetch the share codec while the export screen is being
                   // read, so the first press of share does not wait on it.
@@ -955,7 +1196,7 @@ function Studio() {
       {/* Oscilloscope */}
       {song && (
         <Oscilloscope
-          analyser={audioGraphRef.current?.getAnalyser() ?? null}
+          analyser={analyser}
           isPlaying={isPlaying}
           height={48}
           barCount={BAR_COUNT}
@@ -1017,6 +1258,11 @@ function Studio() {
           onSetEffect={handleSetEffect}
           onEdit={scheduleChannelRerender}
           onAudition={handleAuditionNote}
+          midiEnabled={midiEnabled}
+          armedChannels={armedChannels}
+          onToggleArm={toggleArm}
+          octave={octave}
+          setOctave={setOctave}
           onBeginEdit={useSongStore.getState().beginEdit}
           onEndEdit={useSongStore.getState().endEdit}
           isPlaying={isPlaying}
@@ -1030,6 +1276,20 @@ function Studio() {
       ) : null}
 
       <HelpModal visible={showHelp} onClose={() => setShowHelp(false)} />
+
+      <MidiModal
+        visible={showMidi}
+        onClose={() => setShowMidi(false)}
+        supported={midiSupported}
+        enabled={midiEnabled}
+        devices={midiDevices}
+        armedChannels={armedChannels}
+        error={midiError}
+        onEnable={enableMidi}
+        onDisable={disableMidi}
+        onToggleArm={toggleArm}
+        launchpad={launchpad}
+      />
 
       {/* Load Modal */}
       <LoadModal
@@ -1045,8 +1305,8 @@ function Studio() {
         <ExportModal
           visible={showExport}
           song={song}
-          onClose={() => { setShowExport(false); exportPromiseRef.current = null; }}
-          renderPromise={exportPromiseRef.current}
+          onClose={() => { setShowExport(false); setExportPromise(null); }}
+          renderPromise={exportPromise}
         />
       )}
 
@@ -1158,6 +1418,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
     alignItems: 'center',
+  },
+  // A square the size of the transport buttons: icon over label, so it reads as
+  // a device connection rather than another text chip.
+  midiBtn: {
+    width: 52,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    alignSelf: 'flex-end',
+  },
+  midiBtnOn: {
+    borderColor: colors.accentPrimary,
+    backgroundColor: 'rgba(232, 116, 14, 0.12)',
+  },
+  midiBtnText: {
+    fontFamily: fonts.mono,
+    fontSize: 8,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    letterSpacing: 1,
+  },
+  midiBtnTextOn: {
+    color: colors.accentPrimary,
   },
   actionBtn: {
     paddingHorizontal: spacing.sm,

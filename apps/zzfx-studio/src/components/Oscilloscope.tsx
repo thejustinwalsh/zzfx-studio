@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { colors } from '../theme/colors';
 
@@ -147,17 +147,24 @@ export function Oscilloscope({
   const [displayColors, setDisplayColors] = useState<string[]>(
     () => Array(barCount).fill(`rgb(${NEUTRAL_RGB[0]},${NEUTRAL_RGB[1]},${NEUTRAL_RGB[2]})`)
   );
-  const rafRef = useRef<number>(0);
   const dataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
   // Mutable current bar heights and RGB for lerping
   const currentBarsRef = useRef<number[]>([...generateIdleBars(barCount)]);
   const currentRgbRef = useRef<RGB[]>(
     Array.from({ length: barCount }, () => [...NEUTRAL_RGB] as RGB)
   );
+  /**
+   * Whether playback is running, for the frame loop to read.
+   *
+   * Assigned during render before, which the compiler cannot see and which
+   * takes the whole component out of compilation. Written after commit instead.
+   */
   const isPlayingRef = useRef(isPlaying);
-  isPlayingRef.current = isPlaying;
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
 
-  const tick = useCallback(() => {
+  const tick = useEffectEvent(() => {
     const idle = idleBarsRef.current as number[];
     const currentBars = currentBarsRef.current as number[];
     const currentRgb = currentRgbRef.current;
@@ -230,18 +237,25 @@ export function Oscilloscope({
       setDisplayColors(strings);
     }
 
-    // Keep running if still lerping toward idle
-    if (barsChanged || colorsChanged || playing) {
-      rafRef.current = requestAnimationFrame(tick);
-    }
-  }, [analyser, barCount, barColors]);
+    // Report whether another frame is wanted; the loop below schedules it.
+    return barsChanged || colorsChanged || playing;
+  });
 
+  /**
+   * The frame loop.
+   *
+   * tick used to reschedule itself, a self-reference the compiler rejects. It
+   * returns whether another frame is wanted and the loop lives here, so the
+   * self-termination at idle is unchanged and the cleanup cannot miss a frame.
+   */
   useEffect(() => {
-    // Always start the tick loop — it self-terminates when settled at idle
-    cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [isPlaying, analyser, tick]);
+    let raf = 0;
+    const loop = () => {
+      if (tick()) raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying, analyser]);
 
   return (
     <View style={[styles.container, { height }]}>

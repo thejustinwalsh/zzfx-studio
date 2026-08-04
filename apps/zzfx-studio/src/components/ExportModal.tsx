@@ -151,7 +151,9 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
   useEffect(() => {
     if (!visible) return;
     if (_Highlighter) {
-      setHighlighterReady(true);
+      // Deferred: setting state synchronously in an effect cascades a render
+      // and takes the component out of compilation.
+      queueMicrotask(() => setHighlighterReady(true));
       return;
     }
     loadHighlighter().then(() => {
@@ -174,7 +176,7 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
   // Await the render promise when modal opens
   useEffect(() => {
     if (!visible || !renderPromise) {
-      setRendered(null);
+      queueMicrotask(() => setRendered(null));
       return;
     }
     let cancelled = false;
@@ -234,14 +236,6 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
     return rendered.left.length / ZZFX.sampleRate;
   }, [rendered]);
 
-  useEffect(() => {
-    if (!visible) {
-      stopPlayback();
-      cancelAnimationFrame(lerpRafRef.current);
-    }
-    return () => { stopPlayback(); cancelAnimationFrame(lerpRafRef.current); };
-  }, [visible]);
-
   const stopPlayback = useCallback(() => {
     if (sourceRef.current) {
       try { sourceRef.current.stop(); } catch {}
@@ -251,6 +245,16 @@ export function ExportModal({ visible, song, onClose, renderPromise }: ExportMod
     setIsPlaying(false);
     setPlaybackProgress(0);
   }, []);
+
+  // Placed after stopPlayback rather than before it: the compiler follows
+  // source order and refuses a reference to a variable declared later, which
+  // was enough to stop this component being compiled at all.
+  useEffect(() => {
+    // Cleanup only. Calling stopPlayback in the body as well was redundant --
+    // when `visible` flips, the previous run's cleanup has already stopped it --
+    // and it sets state, which synchronously in an effect cascades a render.
+    return () => { stopPlayback(); cancelAnimationFrame(lerpRafRef.current); };
+  }, [visible, stopPlayback]);
 
   const handlePlay = useCallback(() => {
     if (isPlaying) {

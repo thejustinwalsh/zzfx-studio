@@ -12,6 +12,15 @@ module.exports = defineConfig([
     rules: reactHooks.configs.flat['recommended-latest'].rules,
   },
   {
+    // The service worker source runs in a worker, not a browser page: its
+    // globals come from the Workbox runtime it importScripts. Declaring them
+    // beats disabling the rule, which would hide a genuine typo.
+    files: ['src/sw-source.js'],
+    languageOptions: {
+      globals: { importScripts: 'readonly', workbox: 'readonly', self: 'readonly' },
+    },
+  },
+  {
     ignores: [
       'dist/*',
       '.expo/*',
