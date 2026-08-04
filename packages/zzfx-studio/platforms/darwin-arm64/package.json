@@ -1,6 +1,6 @@
 {
   "name": "@zzfx-studio/platform-darwin-arm64",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "ZzFX Studio — macOS ARM64 binary",
   "license": "MIT",
   "os": [
