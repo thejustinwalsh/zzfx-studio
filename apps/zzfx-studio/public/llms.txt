@@ -2,7 +2,7 @@
 
 > Algorithmic chiptune tracker that generates 4-channel retro songs instantly using pure math. Songs export as ESM JavaScript using the ZzFXM sequencer format, played via the `@zzfx-studio/zzfxm` npm package.
 
-ZzFX Studio generates complete 4-channel songs (melody, harmony, bass, drums) with no AI -- pure algorithmic composition using scale-constrained note selection, Euclidean rhythms, and genre-aware templates.
+ZzFX Studio generates complete 4-channel songs (melody, harmony, bass, drums) using pure algorithmic composition: scale-constrained note selection, Euclidean rhythms, and genre-aware templates.
 
 Exported code from ZzFX Studio is ready to use in games, demos, and creative projects. Install `@zzfx-studio/zzfxm` to play it.
 
