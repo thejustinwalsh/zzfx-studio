@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/zzfx-studio)](https://www.npmjs.com/package/zzfx-studio)
 [![license](https://img.shields.io/npm/l/zzfx-studio)](./LICENSE)
 
-An algorithmic chiptune tracker that generates 4-channel retro songs instantly using pure math -- no samples, no AI, no network calls. Built for indie game devs who need quick retro audio for game jams and chiptune hobbyists who enjoy the creative process.
+An algorithmic chiptune tracker that generates 4-channel retro songs instantly using pure math -- no samples, no network calls. Built for indie game devs who need quick retro audio for game jams and chiptune hobbyists who enjoy the creative process.
 
 Built with ZzFX + ZzFXM for audio synthesis in ~1KB.
 
